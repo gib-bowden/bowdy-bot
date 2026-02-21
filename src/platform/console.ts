@@ -1,11 +1,11 @@
 import * as readline from "node:readline";
-import type { IncomingMessage, OutgoingMessage, Platform } from "./types.js";
+import type { IncomingMessage, Platform, MessageHandler } from "./types.js";
 import { logger } from "../logger.js";
 
 export class ConsolePlatform implements Platform {
   private rl: readline.Interface | null = null;
 
-  async start(handler: (message: IncomingMessage) => Promise<OutgoingMessage>): Promise<void> {
+  async start(handler: MessageHandler): Promise<void> {
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -28,12 +28,16 @@ export class ConsolePlatform implements Platform {
         platform: "console",
       };
 
+      process.stdout.write("\n");
+
       try {
-        const response = await handler(message);
-        console.log(`\n${response.text}\n`);
+        await handler(message, {
+          onText: (chunk) => process.stdout.write(chunk),
+          onComplete: () => process.stdout.write("\n\n"),
+        });
       } catch (err) {
         logger.error({ err }, "Error handling message");
-        console.log("\n[Error processing message]\n");
+        console.log("[Error processing message]\n");
       }
 
       process.stdout.write("> ");

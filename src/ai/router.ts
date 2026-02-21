@@ -1,7 +1,8 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { getClient } from "./client.js";
 import type { ModuleRegistry } from "../modules/registry.js";
-import type { IncomingMessage, OutgoingMessage } from "../platform/types.js";
+import type { IncomingMessage } from "../platform/types.js";
+import { getConversationHistory, saveMessage } from "../db/conversation.js";
 import { logger } from "../logger.js";
 
 const SYSTEM_PROMPT = `You are Bowdy Bot, a helpful family assistant for the Bowden household.
@@ -12,6 +13,12 @@ For general conversation, just respond naturally.`;
 
 const MODEL = "claude-sonnet-4-20250514";
 
+export interface StreamCallbacks {
+  onText?: (chunk: string) => void;
+  onToolUse?: (toolName: string) => void;
+  onComplete?: (fullText: string) => void;
+}
+
 export class AIRouter {
   private registry: ModuleRegistry;
 
@@ -19,70 +26,120 @@ export class AIRouter {
     this.registry = registry;
   }
 
-  async handle(message: IncomingMessage): Promise<OutgoingMessage> {
+  async handle(
+    message: IncomingMessage,
+    callbacks?: StreamCallbacks,
+  ): Promise<string> {
     const client = getClient();
     const tools = this.registry.getToolDefinitions();
 
+    // Load conversation history
+    const history = await getConversationHistory(message.platformUserId);
     const messages: Anthropic.MessageParam[] = [
+      ...history.map((h) => ({ role: h.role, content: h.content }) as Anthropic.MessageParam),
       { role: "user", content: message.text },
     ];
 
-    let response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      tools,
-      messages,
-    });
+    // Save the user message
+    await saveMessage(message.platformUserId, "user", message.text);
 
-    // Tool use loop: keep going until Claude stops calling tools
-    while (response.stop_reason === "tool_use") {
-      const assistantContent = response.content;
-      messages.push({ role: "assistant", content: assistantContent });
+    // System prompt with cache control
+    const system: Anthropic.TextBlockParam[] = [
+      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+    ];
 
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    // Mark last tool for caching (tools are stable across calls)
+    const cachedTools = tools.length > 0
+      ? tools.map((tool, i) =>
+          i === tools.length - 1
+            ? { ...tool, cache_control: { type: "ephemeral" as const } }
+            : tool,
+        )
+      : tools;
 
-      for (const block of assistantContent) {
-        if (block.type !== "tool_use") continue;
+    let finalText = "";
 
-        logger.info({ tool: block.name, input: block.input }, "Executing tool");
+    // Streaming + tool loop
+    let done = false;
+    while (!done) {
+      const stream = client.messages.stream({
+        model: MODEL,
+        max_tokens: 1024,
+        system,
+        tools: cachedTools,
+        messages,
+      });
 
-        try {
-          const result = await this.registry.executeTool(block.name, block.input as Record<string, unknown>);
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: JSON.stringify(result),
-          });
-        } catch (err) {
-          logger.error({ err, tool: block.name }, "Tool execution failed");
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: JSON.stringify({ error: String(err) }),
-            is_error: true,
-          });
+      const toolUseBlocks: Anthropic.ContentBlock[] = [];
+      let currentText = "";
+
+      for await (const event of stream) {
+        if (event.type === "content_block_delta") {
+          if (event.delta.type === "text_delta") {
+            currentText += event.delta.text;
+            callbacks?.onText?.(event.delta.text);
+          }
+        } else if (event.type === "content_block_start") {
+          if (event.content_block.type === "tool_use") {
+            callbacks?.onToolUse?.(event.content_block.name);
+          }
         }
       }
 
-      messages.push({ role: "user", content: toolResults });
+      const response = await stream.finalMessage();
 
-      response = await client.messages.create({
-        model: MODEL,
-        max_tokens: 1024,
-        system: SYSTEM_PROMPT,
-        tools,
-        messages,
-      });
+      // Collect full content for message history
+      for (const block of response.content) {
+        if (block.type === "tool_use") {
+          toolUseBlocks.push(block);
+        }
+      }
+
+      if (response.stop_reason === "tool_use") {
+        // Add assistant message with all content
+        messages.push({ role: "assistant", content: response.content });
+
+        // Execute tools
+        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        for (const block of toolUseBlocks) {
+          if (block.type !== "tool_use") continue;
+          logger.info({ tool: block.name, input: block.input }, "Executing tool");
+
+          try {
+            const result = await this.registry.executeTool(
+              block.name,
+              block.input as Record<string, unknown>,
+            );
+            toolResults.push({
+              type: "tool_result",
+              tool_use_id: block.id,
+              content: JSON.stringify(result),
+            });
+          } catch (err) {
+            logger.error({ err, tool: block.name }, "Tool execution failed");
+            toolResults.push({
+              type: "tool_result",
+              tool_use_id: block.id,
+              content: JSON.stringify({ error: String(err) }),
+              is_error: true,
+            });
+          }
+        }
+
+        messages.push({ role: "user", content: toolResults });
+        // Loop again for Claude's response after tool results
+      } else {
+        finalText = currentText;
+        done = true;
+      }
     }
 
-    // Extract text from final response
-    const textBlocks = response.content.filter(
-      (block): block is Anthropic.TextBlock => block.type === "text"
-    );
+    const responseText = finalText || "I'm not sure how to respond to that.";
 
-    return {
-      text: textBlocks.map((b) => b.text).join("\n") || "I'm not sure how to respond to that.",
-    };
+    // Save assistant response
+    await saveMessage(message.platformUserId, "assistant", responseText);
+
+    callbacks?.onComplete?.(responseText);
+    return responseText;
   }
 }

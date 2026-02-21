@@ -1,7 +1,7 @@
 import { Bot } from "grammy";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
-import type { IncomingMessage, OutgoingMessage, Platform } from "./types.js";
+import type { IncomingMessage, Platform, MessageHandler } from "./types.js";
 
 export class TelegramPlatform implements Platform {
   private bot: Bot;
@@ -13,7 +13,7 @@ export class TelegramPlatform implements Platform {
     this.bot = new Bot(config.telegramBotToken);
   }
 
-  async start(handler: (message: IncomingMessage) => Promise<OutgoingMessage>): Promise<void> {
+  async start(handler: MessageHandler): Promise<void> {
     this.bot.on("message:text", async (ctx) => {
       const message: IncomingMessage = {
         platformUserId: String(ctx.from.id),
@@ -24,8 +24,24 @@ export class TelegramPlatform implements Platform {
 
       logger.info({ user: message.platformUsername }, "Telegram message received");
 
-      const response = await handler(message);
-      await ctx.reply(response.text);
+      // Send typing indicator while processing
+      const typingInterval = setInterval(() => {
+        ctx.replyWithChatAction("typing").catch(() => {});
+      }, 4000);
+
+      // Send initial typing action immediately
+      await ctx.replyWithChatAction("typing").catch(() => {});
+
+      try {
+        // No streaming for Telegram — collect full response then send
+        const responseText = await handler(message);
+        await ctx.reply(responseText);
+      } catch (err) {
+        logger.error({ err }, "Error handling Telegram message");
+        await ctx.reply("Sorry, something went wrong. Try again?");
+      } finally {
+        clearInterval(typingInterval);
+      }
     });
 
     logger.info("Starting Telegram bot (polling)");

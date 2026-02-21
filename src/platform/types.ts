@@ -1,3 +1,5 @@
+import type { StreamCallbacks } from "../ai/router.js";
+
 export interface IncomingMessage {
   platformUserId: string;
   platformUsername: string;
@@ -5,11 +7,9 @@ export interface IncomingMessage {
   platform: "console" | "telegram";
 }
 
-export interface OutgoingMessage {
-  text: string;
-}
+export type MessageHandler = (message: IncomingMessage, callbacks?: StreamCallbacks) => Promise<string>;
 
 export interface Platform {
-  start(handler: (message: IncomingMessage) => Promise<OutgoingMessage>): Promise<void>;
+  start(handler: MessageHandler): Promise<void>;
   stop(): void;
 }

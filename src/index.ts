@@ -29,4 +29,4 @@ if (config.platform === "telegram") {
 logger.info({ platform: config.platform }, "Starting bowdy-bot");
 
 // Start
-await platform.start((message) => router.handle(message));
+await platform.start((message, callbacks) => router.handle(message, callbacks));
