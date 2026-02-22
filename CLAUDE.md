@@ -4,7 +4,7 @@ Family AI assistant for the Bowden household — manages tasks, groceries, calen
 
 ## Tech Stack
 
-- **Runtime**: Node.js 20+, TypeScript, ESM (`"type": "module"`)
+- **Runtime**: Node.js 22+, TypeScript, ESM (`"type": "module"`)
 - **AI**: Anthropic Claude SDK (claude-sonnet-4-20250514) with tool_use for routing
 - **Database**: SQLite via better-sqlite3 + Drizzle ORM
 - **Platforms**: Console (default), Telegram (grammy), Twilio SMS

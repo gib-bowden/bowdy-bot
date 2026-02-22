@@ -6,7 +6,7 @@ Family AI assistant for the Bowden household. Chat naturally to manage tasks, gr
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) v20+
+- [Node.js](https://nodejs.org/) v22+
 - An [Anthropic API key](https://console.anthropic.com/settings/keys)
 
 ### Setup
