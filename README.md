@@ -84,15 +84,37 @@ Manage to-do lists and grocery lists with natural language:
 
 Tasks are stored in a local SQLite database at `data/bowdy-bot.db`.
 
-### Calendar (Planned)
+### Calendar
 
-Google Calendar integration is on the roadmap. Will support:
+Google Calendar integration via a GCP service account. Supports viewing, creating, and deleting events:
 
-- "What's on our calendar this week?"
-- "Schedule a dentist appointment for Thursday at 2pm"
-- "When are we both free this weekend?"
+| What you can say | What happens |
+|---|---|
+| "What's on our calendar this week?" | Lists events for the next 7 days |
+| "What do we have next month?" | Lists events for the next 30 days |
+| "Schedule a dentist appointment Thursday at 2pm" | Creates a calendar event |
+| "Cancel the dentist appointment" | Finds and deletes the matching event |
 
-This will require Google OAuth2 or a service account with access to your family calendar.
+#### Setup
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com), create a project (or use an existing one)
+2. Enable the **Google Calendar API** (APIs & Services > Library > search "Google Calendar API")
+3. Create a **Service Account** (APIs & Services > Credentials > Create Credentials > Service Account)
+4. Create a key for the service account (Keys tab > Add Key > JSON) and save the downloaded file somewhere safe:
+   ```bash
+   mkdir -p ~/.config/bowdy-bot
+   mv ~/Downloads/your-project-*.json ~/.config/bowdy-bot/google-service-account.json
+   ```
+5. Copy the service account email from the credentials page (looks like `xxx@project.iam.gserviceaccount.com`)
+6. In [Google Calendar settings](https://calendar.google.com/calendar/r/settings), find your shared family calendar, go to "Share with specific people", and add the service account email with **"Make changes to events"** permission
+7. Still in calendar settings, copy the **Calendar ID** (under "Integrate calendar" — for the primary calendar of a Gmail account, it's the Gmail address)
+8. Add to your `.env`:
+   ```
+   GOOGLE_SERVICE_ACCOUNT_KEY_PATH=~/.config/bowdy-bot/google-service-account.json
+   GOOGLE_CALENDAR_ID=family@gmail.com
+   ```
+
+The calendar module only loads when both env vars are set. If they're missing, the bot runs fine without calendar features.
 
 ### General Chat
 
@@ -109,6 +131,8 @@ All configuration is via environment variables (`.env` file):
 | `TELEGRAM_BOT_TOKEN` | If telegram | — | Bot token from @BotFather |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
 | `DB_PATH` | No | `./data/bowdy-bot.db` | Path to SQLite database file |
+| `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` | No | — | Path to GCP service account JSON key |
+| `GOOGLE_CALENDAR_ID` | No | — | Google Calendar ID (e.g. Gmail address) |
 
 ## API Costs
 
@@ -168,7 +192,7 @@ Claude IS the router. Modules register tools with descriptions, and Claude decid
 - [x] Task & grocery list management
 - [x] Telegram integration
 - [ ] Conversation history / context window
-- [ ] Google Calendar integration
+- [x] Google Calendar integration
 - [ ] WhatsApp adapter
 - [ ] Recurring tasks
 - [ ] Family communication topics

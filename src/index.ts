@@ -6,6 +6,7 @@ import type { Platform } from "./platform/types.js";
 import { ModuleRegistry } from "./modules/registry.js";
 import { AIRouter } from "./ai/router.js";
 import { tasksModule } from "./modules/tasks/index.js";
+import { calendarModule } from "./modules/calendar/index.js";
 
 // Ensure DB schema exists
 ensureSchema();
@@ -13,6 +14,9 @@ ensureSchema();
 // Register modules
 const registry = new ModuleRegistry();
 registry.register(tasksModule);
+if (config.googleServiceAccountKeyPath && config.googleCalendarId) {
+  registry.register(calendarModule);
+}
 
 // Create AI router
 const router = new AIRouter(registry);
