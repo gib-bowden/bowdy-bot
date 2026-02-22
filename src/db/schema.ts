@@ -12,6 +12,7 @@ export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(), // ULID
   title: text("title").notNull(),
   list: text("list").notNull().default("general"), // "general", "grocery", etc.
+  dueDate: text("due_date"), // ISO date string, e.g. "2026-02-25"
   completed: integer("completed", { mode: "boolean" }).notNull().default(false),
   createdBy: text("created_by").references(() => users.id),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
@@ -20,7 +21,7 @@ export const tasks = sqliteTable("tasks", {
 
 export const conversationHistory = sqliteTable("conversation_history", {
   id: text("id").primaryKey(), // ULID
-  userId: text("user_id").references(() => users.id),
+  userId: text("user_id").notNull(),
   role: text("role").notNull(), // "user" | "assistant"
   content: text("content").notNull(),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),

@@ -8,7 +8,7 @@ const tools: Anthropic.Tool[] = [
   {
     name: "add_task",
     description:
-      "Add a task or item to a list. Use list='grocery' for grocery/shopping items, list='general' for to-do items, or any other list name the user specifies.",
+      "Add a task or item to a list. Use list='grocery' for grocery/shopping items, list='general' for to-do items, or any other list name the user specifies. Set due_date when the user mentions a deadline or timeframe.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -17,6 +17,10 @@ const tools: Anthropic.Tool[] = [
           type: "string",
           description: "Which list to add to: 'grocery', 'general', or a custom name",
           default: "general",
+        },
+        due_date: {
+          type: "string",
+          description: "Due date in ISO format (YYYY-MM-DD). Interpret relative dates like 'this week' (end of current week = Friday), 'tomorrow', 'next Monday', etc.",
         },
       },
       required: ["title"],
@@ -63,17 +67,19 @@ async function addTask(input: Record<string, unknown>): Promise<unknown> {
   const db = getDb();
   const title = input["title"] as string;
   const list = (input["list"] as string) || "general";
+  const dueDate = (input["due_date"] as string) || null;
   const id = ulid();
 
   await db.insert(schema.tasks).values({
     id,
     title,
     list,
+    dueDate,
     completed: false,
     createdAt: new Date().toISOString(),
   });
 
-  return { success: true, id, title, list };
+  return { success: true, id, title, list, dueDate };
 }
 
 async function listTasks(input: Record<string, unknown>): Promise<unknown> {
@@ -112,6 +118,7 @@ async function listTasks(input: Record<string, unknown>): Promise<unknown> {
       id: t.id,
       title: t.title,
       list: t.list,
+      dueDate: t.dueDate,
       completed: t.completed,
     })),
   };

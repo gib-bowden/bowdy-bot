@@ -26,20 +26,33 @@ export function ensureSchema(): void {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       list TEXT NOT NULL DEFAULT 'general',
+      due_date TEXT,
       completed INTEGER NOT NULL DEFAULT 0,
       created_by TEXT REFERENCES users(id),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       completed_at TEXT
     );
 
-    CREATE TABLE IF NOT EXISTS conversation_history (
+    DROP TABLE IF EXISTS conversation_history;
+    CREATE TABLE conversation_history (
       id TEXT PRIMARY KEY,
-      user_id TEXT REFERENCES users(id),
+      user_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // Add columns to existing tables (safe to fail if already exists)
+  const addColumn = (table: string, column: string, type: string) => {
+    try {
+      sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    } catch {
+      // Column already exists
+    }
+  };
+
+  addColumn("tasks", "due_date", "TEXT");
 
   sqlite.close();
   logger.info("Schema ensured");
