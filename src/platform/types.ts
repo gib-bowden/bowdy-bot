@@ -4,7 +4,7 @@ export interface IncomingMessage {
   platformUserId: string;
   platformUsername: string;
   text: string;
-  platform: "console" | "telegram" | "imessage";
+  platform: "console" | "telegram" | "twilio";
 }
 
 export type MessageHandler = (message: IncomingMessage, callbacks?: StreamCallbacks) => Promise<string>;

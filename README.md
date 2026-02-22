@@ -59,29 +59,27 @@ No extra setup needed. Set `PLATFORM=console` in `.env` (or leave it blank — c
 
 The bot uses long-polling, so it works without a public URL or webhook setup.
 
-### iMessage (macOS only)
+### Twilio SMS
 
-Send texts to the bot from your iPhone via iMessage — no extra apps needed.
-
-**Requirements**: macOS with Messages.app signed into iMessage.
-
-**One-time macOS permissions**:
-1. **Full Disk Access** — System Settings > Privacy & Security > Full Disk Access > add Terminal (or whichever app runs the bot). Required to read `chat.db`.
-2. **Automation** — The first time the bot sends a reply, macOS will prompt to allow Terminal to control Messages.app. Approve it once.
+SMS via a dedicated Twilio phone number. Works on any server — not tied to macOS like iMessage.
 
 **Setup**:
-1. Update `.env`:
+1. Create a [Twilio account](https://www.twilio.com/) and buy a phone number (~$1.50/month)
+2. In the Twilio console, set the number's "A message comes in" webhook to `https://your-server:3000/` (POST)
+3. Update `.env`:
    ```
-   PLATFORM=imessage
-   IMESSAGE_ALLOWLIST=+16155551234:Gib,+16155555678:Mary Becker
+   PLATFORM=twilio
+   TWILIO_ACCOUNT_SID=ACxxxxx
+   TWILIO_AUTH_TOKEN=your-auth-token
+   TWILIO_PHONE_NUMBER=+16155551234
+   TWILIO_ALLOWLIST=+16155559999:Gib,+16155558888:Mary Becker
    ```
-2. Run the bot: `npx tsx src/index.ts`
-3. Send an iMessage to the Mac from an allowlisted phone number or email
-4. The bot reads the message, processes it through Claude, and replies via iMessage
+4. Run the bot: `npx tsx src/index.ts`
+5. Text the Twilio number from an allowlisted phone
 
-The allowlist is a comma-separated list of `handle:Name` pairs. The handle is a phone number (with country code) or email address. The name is how the bot will know who's texting. Only messages from allowlisted senders are processed — all others are silently ignored.
+The allowlist works the same as iMessage — comma-separated `phone:Name` pairs. Only allowlisted senders get responses; others are silently ignored. Long messages are automatically split at ~1500 characters for readability.
 
-Group chats are supported. If someone in the allowlist sends a message in a group chat, the bot will reply to that group chat.
+For local development, use [ngrok](https://ngrok.com/) to expose the webhook port: `ngrok http 3000`.
 
 ### WhatsApp (Planned)
 
@@ -151,14 +149,44 @@ All configuration is via environment variables (`.env` file):
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | Yes | — | Your Anthropic API key |
-| `PLATFORM` | No | `console` | `console`, `telegram`, or `imessage` |
+| `PLATFORM` | No | `console` | `console`, `telegram`, or `twilio` |
 | `TELEGRAM_BOT_TOKEN` | If telegram | — | Bot token from @BotFather |
-| `IMESSAGE_ALLOWLIST` | If imessage | — | Comma-separated `handle:Name` pairs |
-| `IMESSAGE_CHAT_DB_PATH` | No | `~/Library/Messages/chat.db` | Path to iMessage database |
+| `TWILIO_ACCOUNT_SID` | If twilio | — | Twilio Account SID |
+| `TWILIO_AUTH_TOKEN` | If twilio | — | Twilio Auth Token |
+| `TWILIO_PHONE_NUMBER` | If twilio | — | Bot's Twilio phone number |
+| `TWILIO_ALLOWLIST` | If twilio | — | Comma-separated `phone:Name` pairs |
+| `TWILIO_WEBHOOK_PORT` | No | `3000` | Port for incoming SMS webhooks |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
 | `DB_PATH` | No | `./data/bowdy-bot.db` | Path to SQLite database file |
 | `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` | No | — | Path to GCP service account JSON key |
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | No | — | Base64-encoded service account JSON (alternative to file path) |
 | `GOOGLE_CALENDAR_ID` | No | — | Google Calendar ID (e.g. Gmail address) |
+
+## Deploying to Railway
+
+[Railway](https://railway.com/) provides push-to-deploy hosting with persistent volumes for the SQLite database.
+
+1. Push the repo to GitHub
+2. Sign up at [railway.com](https://railway.com/) and connect your GitHub repo
+3. Add a **volume** mounted to `/data` (for the SQLite database)
+4. Set environment variables in the Railway dashboard:
+   ```
+   ANTHROPIC_API_KEY=sk-ant-...
+   PLATFORM=twilio
+   TWILIO_ACCOUNT_SID=ACxxxxx
+   TWILIO_AUTH_TOKEN=...
+   TWILIO_PHONE_NUMBER=+16155551234
+   TWILIO_ALLOWLIST=+16155559999:Gib,+16155558888:Mary Becker
+   DB_PATH=/data/bowdy-bot.db
+   TZ=America/Chicago
+   GOOGLE_SERVICE_ACCOUNT_KEY=<base64-encoded JSON>
+   GOOGLE_CALENDAR_ID=family@gmail.com
+   ```
+   To base64-encode the service account key: `base64 -i google-service-account.json | tr -d '\n'`
+5. Deploy — Railway builds the Docker image and starts the container
+6. Copy the Railway public URL and set it as the Twilio webhook URL (POST) for your phone number
+
+Railway automatically assigns a `PORT` env var which the Twilio adapter uses.
 
 ## API Costs
 
@@ -201,7 +229,7 @@ Claude automatically discovers and routes to your module's tools — no intent m
 ## Architecture
 
 ```
-Chat Platform (Console / Telegram / iMessage / WhatsApp)
+Chat Platform (Console / Telegram / Twilio SMS / WhatsApp)
        ↓ normalized IncomingMessage
 AI Router (Claude with tool_use)
        ↓ tool calls
@@ -217,7 +245,7 @@ Claude IS the router. Modules register tools with descriptions, and Claude decid
 - [x] Console chat platform
 - [x] Task & grocery list management
 - [x] Telegram integration
-- [x] iMessage integration (macOS)
+- [x] Twilio SMS integration
 - [ ] Conversation history / context window
 - [x] Google Calendar integration
 - [ ] WhatsApp adapter

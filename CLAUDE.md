@@ -7,7 +7,7 @@ Family AI assistant for the Bowden household — manages tasks, groceries, calen
 - **Runtime**: Node.js 20+, TypeScript, ESM (`"type": "module"`)
 - **AI**: Anthropic Claude SDK (claude-sonnet-4-20250514) with tool_use for routing
 - **Database**: SQLite via better-sqlite3 + Drizzle ORM
-- **Platforms**: Console (default), Telegram (grammy), iMessage (macOS native)
+- **Platforms**: Console (default), Telegram (grammy), Twilio SMS
 - **Calendar**: Google Calendar API via `googleapis` package (service account auth)
 
 ## Project Structure
@@ -33,7 +33,7 @@ src/
     types.ts        # Platform interface
     console.ts      # Console (stdin/stdout) adapter
     telegram.ts     # Telegram adapter (long-polling via grammy)
-    imessage.ts     # iMessage adapter (macOS chat.db polling + AppleScript)
+    twilio.ts       # Twilio SMS adapter (HTTP webhook + REST API)
 ```
 
 ## Key Patterns
@@ -58,6 +58,6 @@ npm start               # Run production build
 
 Required: `ANTHROPIC_API_KEY`
 
-Optional: `PLATFORM`, `TELEGRAM_BOT_TOKEN`, `IMESSAGE_ALLOWLIST`, `IMESSAGE_CHAT_DB_PATH`, `LOG_LEVEL`, `DB_PATH`, `TZ`, `GOOGLE_SERVICE_ACCOUNT_KEY_PATH`, `GOOGLE_CALENDAR_ID`
+Optional: `PLATFORM`, `TELEGRAM_BOT_TOKEN`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `TWILIO_ALLOWLIST`, `TWILIO_WEBHOOK_PORT`, `LOG_LEVEL`, `DB_PATH`, `TZ`, `GOOGLE_SERVICE_ACCOUNT_KEY_PATH`, `GOOGLE_SERVICE_ACCOUNT_KEY` (base64-encoded JSON, alternative to file path), `GOOGLE_CALENDAR_ID`
 
 See `.env.example` for full list with defaults.
