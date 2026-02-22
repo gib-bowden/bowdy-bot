@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage as HttpRequest, type ServerResponse } from "node:http";
-import { Twilio } from "twilio";
-import { validateRequest } from "twilio";
+import twilio from "twilio";
+const { Twilio, validateRequest } = twilio;
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import type { IncomingMessage, Platform, MessageHandler } from "./types.js";
