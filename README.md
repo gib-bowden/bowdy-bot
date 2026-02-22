@@ -73,13 +73,13 @@ Send texts to the bot from your iPhone via iMessage — no extra apps needed.
 1. Update `.env`:
    ```
    PLATFORM=imessage
-   IMESSAGE_ALLOWLIST=+16155551234,wife@gmail.com
+   IMESSAGE_ALLOWLIST=+16155551234:Gib,+16155555678:Mary Becker
    ```
 2. Run the bot: `npx tsx src/index.ts`
 3. Send an iMessage to the Mac from an allowlisted phone number or email
 4. The bot reads the message, processes it through Claude, and replies via iMessage
 
-The allowlist is a comma-separated list of phone numbers (with country code) and/or email addresses. Only messages from these senders are processed — all others are silently ignored.
+The allowlist is a comma-separated list of `handle:Name` pairs. The handle is a phone number (with country code) or email address. The name is how the bot will know who's texting. Only messages from allowlisted senders are processed — all others are silently ignored.
 
 Group chats are supported. If someone in the allowlist sends a message in a group chat, the bot will reply to that group chat.
 
@@ -153,7 +153,7 @@ All configuration is via environment variables (`.env` file):
 | `ANTHROPIC_API_KEY` | Yes | — | Your Anthropic API key |
 | `PLATFORM` | No | `console` | `console`, `telegram`, or `imessage` |
 | `TELEGRAM_BOT_TOKEN` | If telegram | — | Bot token from @BotFather |
-| `IMESSAGE_ALLOWLIST` | If imessage | — | Comma-separated phone numbers/emails |
+| `IMESSAGE_ALLOWLIST` | If imessage | — | Comma-separated `handle:Name` pairs |
 | `IMESSAGE_CHAT_DB_PATH` | No | `~/Library/Messages/chat.db` | Path to iMessage database |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
 | `DB_PATH` | No | `./data/bowdy-bot.db` | Path to SQLite database file |

@@ -6,7 +6,7 @@ import { getConversationHistory, saveMessage } from "../db/conversation.js";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 
-function getSystemPrompt(): string {
+function getSystemPrompt(username: string): string {
   const now = new Date().toLocaleDateString("en-CA", { timeZone: config.timezone }); // YYYY-MM-DD
   const day = new Date().toLocaleDateString("en-US", { timeZone: config.timezone, weekday: "long" });
   return `You are Bowdy Bot, a helpful family assistant for the Bowden household.
@@ -14,7 +14,8 @@ You help with tasks, groceries, calendar, and general questions.
 Be concise, friendly, and practical. You're talking to family members, so be warm but efficient.
 When a user asks you to do something actionable (add a task, check the calendar, etc.), use the available tools.
 For general conversation, just respond naturally.
-Today is ${day}, ${now}. The family's timezone is ${config.timezone}.`;
+Today is ${day}, ${now}. The family's timezone is ${config.timezone}.
+You are currently talking to ${username}.`;
 }
 
 const MODEL = "claude-sonnet-4-20250514";
@@ -51,7 +52,7 @@ export class AIRouter {
 
     // System prompt with cache control
     const system: Anthropic.TextBlockParam[] = [
-      { type: "text", text: getSystemPrompt(), cache_control: { type: "ephemeral" } },
+      { type: "text", text: getSystemPrompt(message.platformUsername), cache_control: { type: "ephemeral" } },
     ];
 
     // Mark last tool for caching (tools are stable across calls)

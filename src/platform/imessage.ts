@@ -148,7 +148,7 @@ export class IMessagePlatform implements Platform {
   private db: Database.Database | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private lastRowId = 0;
-  private allowlist: Set<string>;
+  private allowlist: Map<string, string>;
   private stmt: Database.Statement | null = null;
 
   constructor() {
@@ -156,14 +156,24 @@ export class IMessagePlatform implements Platform {
     if (!raw) {
       throw new Error(
         "IMESSAGE_ALLOWLIST is required for iMessage platform. " +
-          "Set it to a comma-separated list of phone numbers and/or emails.",
+          "Set it to a comma-separated list of handle:Name pairs, e.g. +16155551234:Gib,wife@gmail.com:Mary",
       );
     }
-    this.allowlist = new Set(
+    this.allowlist = new Map(
       raw
         .split(",")
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean),
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((entry) => {
+          const colonIdx = entry.indexOf(":");
+          if (colonIdx === -1) {
+            return [entry.toLowerCase(), entry] as [string, string];
+          }
+          return [
+            entry.slice(0, colonIdx).trim().toLowerCase(),
+            entry.slice(colonIdx + 1).trim(),
+          ] as [string, string];
+        }),
     );
     logger.info(
       { allowlistSize: this.allowlist.size },
@@ -171,8 +181,8 @@ export class IMessagePlatform implements Platform {
     );
   }
 
-  private isAllowed(handle: string): boolean {
-    return this.allowlist.has(handle.toLowerCase());
+  private getAllowedName(handle: string): string | null {
+    return this.allowlist.get(handle.toLowerCase()) ?? null;
   }
 
   async start(handler: MessageHandler): Promise<void> {
@@ -220,7 +230,8 @@ export class IMessagePlatform implements Platform {
         const text = getMessageText(row);
         if (!text) continue;
 
-        if (!this.isAllowed(row.handle_id)) {
+        const senderName = this.getAllowedName(row.handle_id);
+        if (!senderName) {
           logger.debug(
             { handle: row.handle_id },
             "Ignoring message from non-allowlisted sender",
@@ -230,14 +241,14 @@ export class IMessagePlatform implements Platform {
 
         const message: IncomingMessage = {
           platformUserId: row.handle_id,
-          platformUsername: row.handle_id,
+          platformUsername: senderName,
           text,
           platform: "imessage",
         };
 
         const isGroup = row.is_group === 1;
         logger.info(
-          { user: row.handle_id, isGroup, chatIdentifier: row.chat_identifier },
+          { user: senderName, isGroup, chatIdentifier: row.chat_identifier },
           "iMessage received",
         );
 
