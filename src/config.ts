@@ -14,8 +14,13 @@ function optional(key: string, defaultValue: string): string {
 
 export const config = {
   anthropicApiKey: required("ANTHROPIC_API_KEY"),
-  platform: optional("PLATFORM", "console") as "console" | "telegram",
+  platform: optional("PLATFORM", "console") as "console" | "telegram" | "imessage",
   telegramBotToken: process.env["TELEGRAM_BOT_TOKEN"] ?? "",
+  imessageAllowlist: process.env["IMESSAGE_ALLOWLIST"] ?? "",
+  imessageChatDbPath: optional(
+    "IMESSAGE_CHAT_DB_PATH",
+    `${process.env["HOME"]}/Library/Messages/chat.db`,
+  ),
   logLevel: optional("LOG_LEVEL", "info"),
   dbPath: optional("DB_PATH", "./data/bowdy-bot.db"),
   timezone: optional("TZ", "America/Chicago"),

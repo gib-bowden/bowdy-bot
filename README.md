@@ -59,6 +59,30 @@ No extra setup needed. Set `PLATFORM=console` in `.env` (or leave it blank — c
 
 The bot uses long-polling, so it works without a public URL or webhook setup.
 
+### iMessage (macOS only)
+
+Send texts to the bot from your iPhone via iMessage — no extra apps needed.
+
+**Requirements**: macOS with Messages.app signed into iMessage.
+
+**One-time macOS permissions**:
+1. **Full Disk Access** — System Settings > Privacy & Security > Full Disk Access > add Terminal (or whichever app runs the bot). Required to read `chat.db`.
+2. **Automation** — The first time the bot sends a reply, macOS will prompt to allow Terminal to control Messages.app. Approve it once.
+
+**Setup**:
+1. Update `.env`:
+   ```
+   PLATFORM=imessage
+   IMESSAGE_ALLOWLIST=+16155551234,wife@gmail.com
+   ```
+2. Run the bot: `npx tsx src/index.ts`
+3. Send an iMessage to the Mac from an allowlisted phone number or email
+4. The bot reads the message, processes it through Claude, and replies via iMessage
+
+The allowlist is a comma-separated list of phone numbers (with country code) and/or email addresses. Only messages from these senders are processed — all others are silently ignored.
+
+Group chats are supported. If someone in the allowlist sends a message in a group chat, the bot will reply to that group chat.
+
 ### WhatsApp (Planned)
 
 WhatsApp integration is on the roadmap. The likely approach:
@@ -127,8 +151,10 @@ All configuration is via environment variables (`.env` file):
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | Yes | — | Your Anthropic API key |
-| `PLATFORM` | No | `console` | `console` or `telegram` |
+| `PLATFORM` | No | `console` | `console`, `telegram`, or `imessage` |
 | `TELEGRAM_BOT_TOKEN` | If telegram | — | Bot token from @BotFather |
+| `IMESSAGE_ALLOWLIST` | If imessage | — | Comma-separated phone numbers/emails |
+| `IMESSAGE_CHAT_DB_PATH` | No | `~/Library/Messages/chat.db` | Path to iMessage database |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
 | `DB_PATH` | No | `./data/bowdy-bot.db` | Path to SQLite database file |
 | `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` | No | — | Path to GCP service account JSON key |
@@ -175,7 +201,7 @@ Claude automatically discovers and routes to your module's tools — no intent m
 ## Architecture
 
 ```
-Chat Platform (Console / Telegram / WhatsApp)
+Chat Platform (Console / Telegram / iMessage / WhatsApp)
        ↓ normalized IncomingMessage
 AI Router (Claude with tool_use)
        ↓ tool calls
@@ -191,6 +217,7 @@ Claude IS the router. Modules register tools with descriptions, and Claude decid
 - [x] Console chat platform
 - [x] Task & grocery list management
 - [x] Telegram integration
+- [x] iMessage integration (macOS)
 - [ ] Conversation history / context window
 - [x] Google Calendar integration
 - [ ] WhatsApp adapter

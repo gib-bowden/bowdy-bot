@@ -26,6 +26,9 @@ let platform: Platform;
 if (config.platform === "telegram") {
   const { TelegramPlatform } = await import("./platform/telegram.js");
   platform = new TelegramPlatform();
+} else if (config.platform === "imessage") {
+  const { IMessagePlatform } = await import("./platform/imessage.js");
+  platform = new IMessagePlatform();
 } else {
   platform = new ConsolePlatform();
 }
