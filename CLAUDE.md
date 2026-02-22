@@ -52,6 +52,7 @@ npx tsx src/index.ts    # Dev mode
 npx tsc --noEmit        # Type-check
 npm run build           # Production build (tsup)
 npm start               # Run production build
+npm run build && npm start  # Smoke-test production bundle before pushing
 ```
 
 ## Environment Variables
