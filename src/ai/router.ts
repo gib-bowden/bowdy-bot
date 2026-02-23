@@ -15,6 +15,7 @@ Be concise, friendly, and practical. You're talking to family members, so be war
 When a user asks you to do something actionable (add a task, check the calendar, etc.), use the available tools.
 For general conversation, just respond naturally.
 Today is ${day}, ${now}. The family's timezone is ${config.timezone}.
+You can search the web for current information like weather, news, sports scores, and more.
 You are currently talking to ${username}.`;
 }
 
@@ -55,14 +56,29 @@ export class AIRouter {
       { type: "text", text: getSystemPrompt(message.platformUsername), cache_control: { type: "ephemeral" } },
     ];
 
-    // Mark last tool for caching (tools are stable across calls)
-    const cachedTools = tools.length > 0
-      ? tools.map((tool, i) =>
-          i === tools.length - 1
-            ? { ...tool, cache_control: { type: "ephemeral" as const } }
-            : tool,
-        )
-      : tools;
+    // Web search server tool — executed server-side by Anthropic
+    const webSearchTool: Anthropic.WebSearchTool20250305 = {
+      type: "web_search_20250305",
+      name: "web_search",
+      user_location: {
+        type: "approximate",
+        region: "Texas",
+        country: "US",
+        timezone: config.timezone,
+      },
+    };
+
+    // Mark last module tool for caching (tools are stable across calls)
+    const cachedTools: (Anthropic.Tool | Anthropic.WebSearchTool20250305)[] = tools.length > 0
+      ? [
+          ...tools.map((tool, i) =>
+            i === tools.length - 1
+              ? { ...tool, cache_control: { type: "ephemeral" as const } }
+              : tool,
+          ),
+          webSearchTool,
+        ]
+      : [webSearchTool];
 
     let finalText = "";
 
@@ -71,7 +87,7 @@ export class AIRouter {
     while (!done) {
       const stream = client.messages.stream({
         model: MODEL,
-        max_tokens: 1024,
+        max_tokens: 2048,
         system,
         tools: cachedTools,
         messages,
@@ -89,13 +105,15 @@ export class AIRouter {
         } else if (event.type === "content_block_start") {
           if (event.content_block.type === "tool_use") {
             callbacks?.onToolUse?.(event.content_block.name);
+          } else if (event.content_block.type === "server_tool_use") {
+            callbacks?.onToolUse?.(event.content_block.name);
           }
         }
       }
 
       const response = await stream.finalMessage();
 
-      // Collect full content for message history
+      // Collect client-side tool_use blocks (skip server_tool_use / web_search_tool_result)
       for (const block of response.content) {
         if (block.type === "tool_use") {
           toolUseBlocks.push(block);
