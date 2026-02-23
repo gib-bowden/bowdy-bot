@@ -184,23 +184,56 @@ Google Calendar and Tasks integration via OAuth 2.0. Supports viewing, creating,
 
 #### Setup
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com), create a project (or use an existing one)
-2. Enable the **Google Calendar API** and **Google Tasks API** (APIs & Services > Library)
-3. Create **OAuth 2.0 credentials** (APIs & Services > Credentials > Create Credentials > OAuth client ID > Web application)
-   - Add `http://localhost:3001/oauth/callback` as an authorized redirect URI
-4. Generate an encryption key for storing tokens at rest:
-   ```bash
-   openssl rand -hex 32
-   ```
-5. Add to your `.env`:
-   ```
-   GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-   GOOGLE_CLIENT_SECRET=your-client-secret
-   GOOGLE_CALENDAR_ID=family@gmail.com
-   GOOGLE_TOKEN_ENCRYPTION_KEY=your-64-char-hex-key
-   ```
-6. Start the bot — an OAuth server runs at `http://localhost:3001`
-7. Visit `http://localhost:3001` and sign in with your Google account to connect it
+##### 1. Create a Google Cloud project
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com) and create a new project (or select an existing one)
+2. Go to **APIs & Services > Library** and enable:
+   - **Google Calendar API**
+   - **Google Tasks API**
+
+##### 2. Configure the OAuth consent screen
+
+1. Go to **APIs & Services > OAuth consent screen**
+2. Select **External** user type (unless you have a Google Workspace org) and click **Create**
+3. Fill in the required fields — app name, user support email, and developer contact email. The rest can be left blank.
+4. On the **Scopes** step, click **Add or Remove Scopes** and add:
+   - `https://www.googleapis.com/auth/calendar`
+   - `https://www.googleapis.com/auth/tasks`
+   - `https://www.googleapis.com/auth/userinfo.email`
+   - `https://www.googleapis.com/auth/userinfo.profile`
+5. On the **Test users** step, add the Google accounts you'll connect (e.g. your family Gmail addresses). While the app is in "Testing" mode, only these accounts can sign in.
+6. Click **Save and Continue** through the rest
+
+##### 3. Create OAuth credentials
+
+1. Go to **APIs & Services > Credentials**
+2. Click **Create Credentials > OAuth client ID**
+3. Select **Web application** as the application type
+4. Under **Authorized redirect URIs**, add: `http://localhost:3001/oauth/callback`
+5. Click **Create** and copy the **Client ID** and **Client Secret**
+
+##### 4. Configure environment
+
+Generate an encryption key for storing tokens at rest:
+
+```bash
+openssl rand -hex 32
+```
+
+Add to your `.env`:
+
+```
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+GOOGLE_CALENDAR_ID=family@gmail.com
+GOOGLE_TOKEN_ENCRYPTION_KEY=your-64-char-hex-key
+```
+
+##### 5. Connect your Google account
+
+1. Start the bot — an OAuth server runs at `http://localhost:3001`
+2. Visit `http://localhost:3001` and sign in with your Google account
+3. The first connected account becomes the default for Calendar and Tasks
 
 The calendar and tasks modules only load when Google OAuth is configured. If the vars are missing, the bot runs fine without these features. OAuth tokens are encrypted at rest using AES-256-GCM.
 
