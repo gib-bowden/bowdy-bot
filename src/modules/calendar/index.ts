@@ -14,6 +14,16 @@ export function futureInTz(days: number): string {
   return future.toLocaleString("sv-SE", { timeZone: config.timezone }).replace(" ", "T") + tzOffset();
 }
 
+/** Get ISO datetime for start of a given date (YYYY-MM-DD) in the configured timezone */
+export function startOfDayInTz(dateStr: string): string {
+  return `${dateStr}T00:00:00${tzOffset()}`;
+}
+
+/** Get ISO datetime for end of a given date (YYYY-MM-DD) in the configured timezone */
+export function endOfDayInTz(dateStr: string): string {
+  return `${dateStr}T23:59:59${tzOffset()}`;
+}
+
 /** Get the UTC offset string (e.g. "-06:00") for the configured timezone */
 export function tzOffset(): string {
   const now = new Date();
@@ -42,13 +52,21 @@ const tools: Anthropic.Tool[] = [
   {
     name: "list_events",
     description:
-      "List upcoming calendar events. Returns events within the specified number of days from now. Use query to search for specific events by title.",
+      "List calendar events. Use start_date/end_date for specific date ranges (e.g. 'today' = same date for both). Falls back to 'days' ahead from now if no dates given. Use query to search by title.",
     input_schema: {
       type: "object" as const,
       properties: {
+        start_date: {
+          type: "string",
+          description: "Start date in YYYY-MM-DD format (e.g. 2026-02-23). Events from the start of this day.",
+        },
+        end_date: {
+          type: "string",
+          description: "End date in YYYY-MM-DD format (e.g. 2026-02-23). Events through the end of this day.",
+        },
         days: {
           type: "number",
-          description: "Number of days ahead to look (default: 7)",
+          description: "Number of days ahead to look from now (default: 7). Ignored if start_date/end_date are provided.",
           default: 7,
         },
         query: {
@@ -107,13 +125,19 @@ const tools: Anthropic.Tool[] = [
 async function listEvents(input: Record<string, unknown>): Promise<unknown> {
   const calendar = await getCalendarClient();
   const calendarId = getCalendarId();
+  const startDate = input["start_date"] as string | undefined;
+  const endDate = input["end_date"] as string | undefined;
   const days = (input["days"] as number) || 7;
   const query = input["query"] as string | undefined;
 
+  // Use explicit date range if provided, otherwise fall back to days-from-now
+  const timeMin = startDate ? startOfDayInTz(startDate) : nowInTz();
+  const timeMax = endDate ? endOfDayInTz(endDate) : futureInTz(days);
+
   const response = await calendar.events.list({
     calendarId,
-    timeMin: nowInTz(),
-    timeMax: futureInTz(days),
+    timeMin,
+    timeMax,
     singleEvents: true,
     orderBy: "startTime",
     q: query,
@@ -129,7 +153,7 @@ async function listEvents(input: Record<string, unknown>): Promise<unknown> {
     description: event.description || null,
   }));
 
-  return { count: events.length, days, events };
+  return { count: events.length, ...(startDate ? { startDate, endDate } : { days }), events };
 }
 
 async function createEvent(input: Record<string, unknown>): Promise<unknown> {

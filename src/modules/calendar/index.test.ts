@@ -23,7 +23,7 @@ vi.mock("./client.js", () => ({
   getCalendarId: vi.fn(() => "test@gmail.com"),
 }));
 
-import { calendarModule, tzOffset, ensureOffset, nowInTz, futureInTz } from "./index.js";
+import { calendarModule, tzOffset, ensureOffset, nowInTz, futureInTz, startOfDayInTz, endOfDayInTz } from "./index.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -82,6 +82,28 @@ describe("futureInTz", () => {
   });
 });
 
+describe("startOfDayInTz", () => {
+  it("returns midnight of the given date with timezone offset", () => {
+    const result = startOfDayInTz("2026-02-23");
+    const offset = tzOffset();
+    expect(result).toBe(`2026-02-23T00:00:00${offset}`);
+  });
+});
+
+describe("endOfDayInTz", () => {
+  it("returns 23:59:59 of the given date with timezone offset", () => {
+    const result = endOfDayInTz("2026-02-23");
+    const offset = tzOffset();
+    expect(result).toBe(`2026-02-23T23:59:59${offset}`);
+  });
+
+  it("does not bleed into the next day", () => {
+    const result = endOfDayInTz("2026-02-23");
+    expect(result.slice(0, 10)).toBe("2026-02-23");
+    expect(result.slice(11, 19)).toBe("23:59:59");
+  });
+});
+
 describe("calendarModule.executeTool - list_events", () => {
   it("passes timezone-aware timeMin and timeMax to the API", async () => {
     mockEventsList.mockResolvedValue({ data: { items: [] } });
@@ -128,6 +150,50 @@ describe("calendarModule.executeTool - list_events", () => {
         },
       ],
     });
+  });
+});
+
+describe("calendarModule.executeTool - list_events with date range", () => {
+  it("uses start_date/end_date boundaries instead of days", async () => {
+    mockEventsList.mockResolvedValue({ data: { items: [] } });
+
+    await calendarModule.executeTool("list_events", {
+      start_date: "2026-02-23",
+      end_date: "2026-02-23",
+    });
+
+    const call = mockEventsList.mock.calls[0]![0];
+    const offset = tzOffset();
+    expect(call.timeMin).toBe(`2026-02-23T00:00:00${offset}`);
+    expect(call.timeMax).toBe(`2026-02-23T23:59:59${offset}`);
+  });
+
+  it("returns startDate/endDate in response instead of days", async () => {
+    mockEventsList.mockResolvedValue({ data: { items: [] } });
+
+    const result = await calendarModule.executeTool("list_events", {
+      start_date: "2026-02-23",
+      end_date: "2026-02-24",
+    });
+
+    expect(result).toEqual({
+      count: 0,
+      startDate: "2026-02-23",
+      endDate: "2026-02-24",
+      events: [],
+    });
+  });
+
+  it("falls back to days-from-now when no dates provided", async () => {
+    mockEventsList.mockResolvedValue({ data: { items: [] } });
+
+    const result = await calendarModule.executeTool("list_events", { days: 3 });
+
+    const call = mockEventsList.mock.calls[0]![0];
+    // Should use nowInTz / futureInTz, not startOfDayInTz / endOfDayInTz
+    expect(call.timeMin).not.toContain("T00:00:00");
+    expect(result).toEqual(expect.objectContaining({ days: 3 }));
+    expect(result).not.toHaveProperty("startDate");
   });
 });
 
