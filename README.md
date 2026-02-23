@@ -287,11 +287,17 @@ All configuration is via environment variables (`.env` file):
    GOOGLE_CLIENT_SECRET=your-client-secret
    GOOGLE_CALENDAR_ID=family@gmail.com
    GOOGLE_TOKEN_ENCRYPTION_KEY=your-64-char-hex-key
+   GOOGLE_OAUTH_REDIRECT_URI=https://your-app.up.railway.app/oauth/callback
    ```
 5. Deploy — Railway builds the Docker image and starts the container
 6. Copy the Railway public URL and set it as the Twilio webhook URL (POST) for your phone number
+7. Add the Railway URL to your Google OAuth credentials:
+   - Go to [Google Cloud Console](https://console.cloud.google.com) > **APIs & Services > Credentials**
+   - Edit your OAuth client ID
+   - Add `https://your-app.up.railway.app/oauth/callback` as an **Authorized redirect URI**
+8. Visit `https://your-app.up.railway.app/` to connect your Google account
 
-Railway automatically assigns a `PORT` env var which the Twilio adapter uses.
+Railway automatically assigns a `PORT` env var which the Twilio adapter uses. The OAuth server runs on a separate port (`GOOGLE_OAUTH_PORT`, default 3001) — you may need to connect your Google account locally before deploying, or configure Railway to expose both ports.
 
 ## API Costs
 
