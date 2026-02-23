@@ -3,6 +3,41 @@ import type { Module } from "../types.js";
 import { getCalendarClient, getCalendarId } from "./client.js";
 import { config } from "../../config.js";
 
+/** Get the current time as an ISO string with the correct timezone offset */
+export function nowInTz(): string {
+  return new Date().toLocaleString("sv-SE", { timeZone: config.timezone }).replace(" ", "T") + tzOffset();
+}
+
+/** Get an ISO datetime N days from now with the correct timezone offset */
+export function futureInTz(days: number): string {
+  const future = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  return future.toLocaleString("sv-SE", { timeZone: config.timezone }).replace(" ", "T") + tzOffset();
+}
+
+/** Get the UTC offset string (e.g. "-06:00") for the configured timezone */
+export function tzOffset(): string {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: config.timezone,
+    timeZoneName: "shortOffset",
+  }).formatToParts(now);
+  const offsetPart = parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+  // offsetPart is like "GMT-6" or "GMT+5:30" — convert to "-06:00" or "+05:30"
+  const match = offsetPart.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+  if (!match) return "Z";
+  const sign = match[1]!;
+  const hours = match[2]!.padStart(2, "0");
+  const minutes = match[3] ?? "00";
+  return `${sign}${hours}:${minutes}`;
+}
+
+/** Ensure a datetime string has a timezone offset; append the local offset if missing */
+export function ensureOffset(dt: string): string {
+  // Already has offset (Z, +HH:MM, -HH:MM)
+  if (/Z$|[+-]\d{2}:\d{2}$/.test(dt)) return dt;
+  return dt + tzOffset();
+}
+
 const tools: Anthropic.Tool[] = [
   {
     name: "list_events",
@@ -75,13 +110,10 @@ async function listEvents(input: Record<string, unknown>): Promise<unknown> {
   const days = (input["days"] as number) || 7;
   const query = input["query"] as string | undefined;
 
-  const now = new Date();
-  const future = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-
   const response = await calendar.events.list({
     calendarId,
-    timeMin: now.toISOString(),
-    timeMax: future.toISOString(),
+    timeMin: nowInTz(),
+    timeMax: futureInTz(days),
     singleEvents: true,
     orderBy: "startTime",
     q: query,
@@ -114,8 +146,8 @@ async function createEvent(input: Record<string, unknown>): Promise<unknown> {
     calendarId,
     requestBody: {
       summary: title,
-      start: { dateTime: start, timeZone: config.timezone },
-      end: { dateTime: end, timeZone: config.timezone },
+      start: { dateTime: ensureOffset(start), timeZone: config.timezone },
+      end: { dateTime: ensureOffset(end), timeZone: config.timezone },
       description,
       location,
     },
@@ -136,13 +168,10 @@ async function deleteEvent(input: Record<string, unknown>): Promise<unknown> {
   const title = (input["title"] as string).toLowerCase();
 
   // Search for upcoming events matching the title
-  const now = new Date();
-  const future = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000); // look 90 days ahead
-
   const response = await calendar.events.list({
     calendarId,
-    timeMin: now.toISOString(),
-    timeMax: future.toISOString(),
+    timeMin: nowInTz(),
+    timeMax: futureInTz(90),
     singleEvents: true,
     orderBy: "startTime",
     q: title,

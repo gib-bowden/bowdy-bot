@@ -29,33 +29,44 @@ In the Railway service settings, go to **Variables** and add:
 | Variable | Value |
 |---|---|
 | `ANTHROPIC_API_KEY` | `sk-ant-...` |
-| `PLATFORM` | `twilio` |
+| `PLATFORM` | `twilio` or `groupme` |
 | `TWILIO_ACCOUNT_SID` | `ACxxxxx` |
 | `TWILIO_AUTH_TOKEN` | your auth token |
 | `TWILIO_PHONE_NUMBER` | `+1...` (your Twilio number) |
 | `TWILIO_ALLOWLIST` | `+1...:Gib,+1...:Mary Becker` |
 | `DB_PATH` | `/data/bowdy-bot.db` |
 | `TZ` | `America/Chicago` |
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | base64-encoded JSON (see below) |
-| `GOOGLE_CALENDAR_ID` | your calendar ID |
+| `GOOGLE_CLIENT_ID` | your OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | your OAuth client secret |
+| `GOOGLE_TOKEN_ENCRYPTION_KEY` | `openssl rand -hex 32` output |
+| `GOOGLE_OAUTH_REDIRECT_URI` | `https://your-app.up.railway.app/oauth/callback` |
+| `GOOGLE_CALENDAR_ID` | your calendar ID (e.g. `family@gmail.com`) |
 
-### Base64-encode the Google service account key
+## 5. Configure Google OAuth
 
-```bash
-base64 -i ~/.config/bowdy-bot/google-service-account.json | tr -d '\n' | pbcopy
-```
+1. Go to [Google Cloud Console > Credentials](https://console.cloud.google.com/apis/credentials)
+2. Edit your OAuth 2.0 Client ID
+3. Add `https://your-app.up.railway.app/oauth/callback` to **Authorized redirect URIs**
+4. Make sure your Google account is listed as a **test user** under the OAuth consent screen (unless the app is published)
 
-Paste the clipboard contents as the `GOOGLE_SERVICE_ACCOUNT_KEY` value in Railway.
-
-## 5. Deploy
+## 6. Deploy
 
 After setting variables, Railway will automatically redeploy. Check the deploy logs for:
 
 ```
 Starting Twilio SMS platform on port ...
+OAuth routes mounted on platform server
 ```
 
-## 6. Configure Twilio Webhook
+## 7. Connect Google Account
+
+1. Visit `https://your-app.up.railway.app/` in your browser
+2. Click **Connect Google Account** and sign in
+3. The OAuth tokens are stored in the SQLite database on the Railway volume
+
+This only needs to be done once — the bot uses stored refresh tokens for subsequent requests.
+
+## 8. Configure Twilio Webhook
 
 1. Copy the public URL from Railway (Settings > Networking > Public Networking — generate a domain if needed)
 2. Go to [Twilio Console](https://console.twilio.com/) > Phone Numbers > your number
@@ -63,16 +74,16 @@ Starting Twilio SMS platform on port ...
    - Webhook URL: `https://your-app.up.railway.app/` (POST)
 4. Save
 
-## 7. Verify
+## 9. Verify
 
 1. Text the Twilio number from an allowlisted phone
 2. Check Railway logs for the incoming SMS
 3. You should get a reply back via SMS
-4. Try a calendar command to confirm the service account key works
+4. Try a calendar or tasks command to confirm Google OAuth is working
 
 ## Troubleshooting
 
 - **Build fails**: Check Railway build logs — likely a missing dependency or Node version issue
 - **No response to SMS**: Check that the webhook URL is correct and the phone is in `TWILIO_ALLOWLIST`
-- **Calendar not working**: Verify the base64 key decodes correctly: `echo "YOUR_BASE64" | base64 -d | jq .client_email`
+- **Google OAuth not working**: Make sure `GOOGLE_OAUTH_REDIRECT_URI` matches the redirect URI in Google Cloud Console exactly
 - **DB resets on redeploy**: Make sure the volume is mounted to `/data` and `DB_PATH=/data/bowdy-bot.db`
