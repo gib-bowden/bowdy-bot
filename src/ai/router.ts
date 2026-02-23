@@ -7,11 +7,20 @@ import { config } from "../config.js";
 import { logger } from "../logger.js";
 
 function getSystemPrompt(username: string, platform: string): string {
-  const now = new Date().toLocaleDateString("en-CA", { timeZone: config.timezone }); // YYYY-MM-DD
-  const day = new Date().toLocaleDateString("en-US", { timeZone: config.timezone, weekday: "long" });
+  const now = new Date().toLocaleDateString("en-CA", {
+    timeZone: config.timezone,
+  }); // YYYY-MM-DD
+  const day = new Date().toLocaleDateString("en-US", {
+    timeZone: config.timezone,
+    weekday: "long",
+  });
   const formatting =
     platform === "groupme" || platform === "twilio"
       ? "You are responding in a plain-text chat app. Do NOT use markdown formatting (no **bold**, *italics*, headers, or links). Use plain text only — dashes for lists, ALL CAPS sparingly for emphasis if needed."
+      : "";
+  const groupChatContext =
+    platform === "groupme"
+      ? "You are in a family GroupMe group chat. You were summoned because someone addressed you by name. Keep responses concise and relevant — don't be chatty unless asked."
       : "";
   return `You are Bowdy Bot, a helpful family assistant for the Bowden household.
 You help with tasks, groceries, calendar, and general questions.
@@ -20,7 +29,7 @@ When a user asks you to do something actionable (add a task, check the calendar,
 For general conversation, just respond naturally.
 Today is ${day}, ${now}. The family's timezone is ${config.timezone}.
 You can search the web for current information like weather, news, sports scores, and more.
-You are currently talking to ${username}.${formatting ? "\n" + formatting : ""}`;
+You are currently talking to ${username}.${formatting ? "\n" + formatting : ""}${groupChatContext ? "\n" + groupChatContext : ""}`;
 }
 
 const MODEL = "claude-sonnet-4-6";
@@ -48,7 +57,9 @@ export class AIRouter {
     // Load conversation history
     const history = await getConversationHistory(message.platformUserId);
     const messages: Anthropic.MessageParam[] = [
-      ...history.map((h) => ({ role: h.role, content: h.content }) as Anthropic.MessageParam),
+      ...history.map(
+        (h) => ({ role: h.role, content: h.content }) as Anthropic.MessageParam,
+      ),
       { role: "user", content: message.text },
     ];
 
@@ -57,7 +68,11 @@ export class AIRouter {
 
     // System prompt with cache control
     const system: Anthropic.TextBlockParam[] = [
-      { type: "text", text: getSystemPrompt(message.platformUsername, message.platform), cache_control: { type: "ephemeral" } },
+      {
+        type: "text",
+        text: getSystemPrompt(message.platformUsername, message.platform),
+        cache_control: { type: "ephemeral" },
+      },
     ];
 
     // Web search server tool — executed server-side by Anthropic
@@ -73,16 +88,17 @@ export class AIRouter {
     };
 
     // Mark last module tool for caching (tools are stable across calls)
-    const cachedTools: (Anthropic.Tool | Anthropic.WebSearchTool20250305)[] = tools.length > 0
-      ? [
-          ...tools.map((tool, i) =>
-            i === tools.length - 1
-              ? { ...tool, cache_control: { type: "ephemeral" as const } }
-              : tool,
-          ),
-          webSearchTool,
-        ]
-      : [webSearchTool];
+    const cachedTools: (Anthropic.Tool | Anthropic.WebSearchTool20250305)[] =
+      tools.length > 0
+        ? [
+            ...tools.map((tool, i) =>
+              i === tools.length - 1
+                ? { ...tool, cache_control: { type: "ephemeral" as const } }
+                : tool,
+            ),
+            webSearchTool,
+          ]
+        : [webSearchTool];
 
     let finalText = "";
 
@@ -132,7 +148,10 @@ export class AIRouter {
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
         for (const block of toolUseBlocks) {
           if (block.type !== "tool_use") continue;
-          logger.info({ tool: block.name, input: block.input }, "Executing tool");
+          logger.info(
+            { tool: block.name, input: block.input },
+            "Executing tool",
+          );
 
           try {
             const result = await this.registry.executeTool(

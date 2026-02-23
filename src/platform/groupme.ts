@@ -1,4 +1,8 @@
-import { createServer, type IncomingMessage as HttpRequest, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage as HttpRequest,
+  type ServerResponse,
+} from "node:http";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 import type { IncomingMessage, Platform, MessageHandler } from "./types.js";
@@ -6,6 +10,14 @@ import type { IncomingMessage, Platform, MessageHandler } from "./types.js";
 const MAX_MESSAGE_LENGTH = 1000;
 const SPLIT_DELAY_MS = 500;
 const GROUPME_API_URL = "https://api.groupme.com/v3/bots/post";
+
+/** Trigger words that indicate the message is directed at the bot */
+const BOT_TRIGGERS =
+  /\b(bot|bowdy|bowdey|bowdy bot|bowdey bot|assistant|helper|ai|machine)\b/i;
+
+function isDirectedAtBot(text: string): boolean {
+  return BOT_TRIGGERS.test(text);
+}
 
 function splitMessage(text: string): string[] {
   if (text.length <= MAX_MESSAGE_LENGTH) return [text];
@@ -60,7 +72,9 @@ async function sendGroupMeMessage(botId: string, text: string): Promise<void> {
   });
 
   if (!response.ok) {
-    throw new Error(`GroupMe API error: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `GroupMe API error: ${response.status} ${response.statusText}`,
+    );
   }
 }
 
@@ -80,7 +94,8 @@ export class GroupMePlatform implements Platform {
 
   async start(handler: MessageHandler): Promise<void> {
     let processing = false;
-    const queue: Array<{ senderId: string; senderName: string; text: string }> = [];
+    const queue: Array<{ senderId: string; senderName: string; text: string }> =
+      [];
 
     const processQueue = async () => {
       if (processing) return;
@@ -96,21 +111,34 @@ export class GroupMePlatform implements Platform {
           platform: "groupme",
         };
 
-        logger.info({ user: item.senderName, senderId: item.senderId }, "GroupMe message received");
+        logger.info(
+          { user: item.senderName, senderId: item.senderId },
+          "GroupMe message received",
+        );
 
         try {
+          // Send acknowledgment so the group knows the bot heard them
+          await sendGroupMeMessage(this.botId, "On it...").catch((err) =>
+            logger.warn({ err }, "Failed to send acknowledgment"),
+          );
+
           const responseText = await handler(message);
           const chunks = splitMessage(responseText);
           for (let i = 0; i < chunks.length; i++) {
             if (i > 0) {
-              await new Promise((resolve) => setTimeout(resolve, SPLIT_DELAY_MS));
+              await new Promise((resolve) =>
+                setTimeout(resolve, SPLIT_DELAY_MS),
+              );
             }
             await sendGroupMeMessage(this.botId, chunks[i]!);
           }
         } catch (err) {
           logger.error({ err }, "Error handling GroupMe message");
           try {
-            await sendGroupMeMessage(this.botId, "Sorry, something went wrong. Try again?");
+            await sendGroupMeMessage(
+              this.botId,
+              "Sorry, something went wrong. Try again?",
+            );
           } catch {
             logger.error("Failed to send error reply via GroupMe");
           }
@@ -160,17 +188,32 @@ export class GroupMePlatform implements Platform {
           return;
         }
 
+        const rawText = payload.text.trim();
+
+        // In group chats, only respond when directly addressed
+        if (!isDirectedAtBot(rawText)) {
+          logger.debug(
+            { user: payload.name, text: rawText },
+            "Ignoring GroupMe message not directed at bot",
+          );
+          return;
+        }
+
         queue.push({
           senderId: payload.sender_id,
           senderName: payload.name,
-          text: payload.text.trim(),
+          text: rawText,
         });
         processQueue();
       });
     });
 
     this.server.listen(this.port, () => {
-      logger.info({ port: this.port }, "Starting GroupMe platform on port %d", this.port);
+      logger.info(
+        { port: this.port },
+        "Starting GroupMe platform on port %d",
+        this.port,
+      );
     });
   }
 
