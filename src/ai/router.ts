@@ -1,4 +1,10 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import type {
+  BetaContentBlock,
+  BetaSkillParams,
+  BetaContainerParams,
+  BetaToolUnion,
+} from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 import { getClient } from "./client.js";
 import type { ModuleRegistry } from "../modules/registry.js";
 import type { IncomingMessage } from "../platform/types.js";
@@ -23,16 +29,17 @@ function getSystemPrompt(username: string, platform: string): string {
       ? "You are in a family GroupMe group chat. You were summoned because someone addressed you by name. Keep responses concise and relevant — don't be chatty unless asked."
       : "";
   return `You are Bowdy Bot, a helpful family assistant for the Bowden household.
-You help with tasks, groceries, calendar, and general questions.
 Be concise, friendly, and practical. You're talking to family members, so be warm but efficient.
-When a user asks you to do something actionable (add a task, check the calendar, etc.), use the available tools.
-For general conversation, just respond naturally.
+Use the available tools when a user asks you to do something actionable. For general conversation, just respond naturally.
 Today is ${day}, ${now}. The family's timezone is ${config.timezone}.
-You can search the web for current information like weather, news, sports scores, and more.
 You are currently talking to ${username}.${formatting ? "\n" + formatting : ""}${groupChatContext ? "\n" + groupChatContext : ""}`;
 }
 
 const MODEL = "claude-sonnet-4-6";
+const BETAS: Anthropic.Beta.AnthropicBeta[] = [
+  "skills-2025-10-02",
+  "code-execution-2025-08-25",
+];
 
 export interface StreamCallbacks {
   onText?: (chunk: string) => void;
@@ -42,9 +49,11 @@ export interface StreamCallbacks {
 
 export class AIRouter {
   private registry: ModuleRegistry;
+  private skills: BetaSkillParams[];
 
-  constructor(registry: ModuleRegistry) {
+  constructor(registry: ModuleRegistry, skills: BetaSkillParams[] = []) {
     this.registry = registry;
+    this.skills = skills;
   }
 
   async handle(
@@ -97,33 +106,47 @@ export class AIRouter {
       },
     };
 
-    // Mark last module tool for caching (tools are stable across calls)
-    const cachedTools: (Anthropic.Tool | Anthropic.WebSearchTool20250305)[] =
-      tools.length > 0
-        ? [
-            ...tools.map((tool, i) =>
-              i === tools.length - 1
-                ? { ...tool, cache_control: { type: "ephemeral" as const } }
-                : tool,
-            ),
-            webSearchTool,
-          ]
-        : [webSearchTool];
+    // Build tools array: module tools + code execution (if skills) + web search
+    const betaTools: BetaToolUnion[] = [
+      ...tools.map((tool, i) =>
+        i === tools.length - 1
+          ? { ...tool, cache_control: { type: "ephemeral" as const } }
+          : tool,
+      ),
+      ...(this.skills.length > 0
+        ? [{ type: "code_execution_20250522" as const, name: "code_execution" as const }]
+        : []),
+      webSearchTool,
+    ];
+
+    // Container config for skills
+    let container: BetaContainerParams | string | undefined;
+    if (this.skills.length > 0) {
+      container = { skills: this.skills };
+    }
 
     let finalText = "";
+    let containerId: string | undefined;
 
     // Streaming + tool loop
     let done = false;
     while (!done) {
-      const stream = client.messages.stream({
+      // If we have a container ID from a previous iteration, reuse it
+      const containerParam = containerId
+        ? containerId
+        : container;
+
+      const stream = client.beta.messages.stream({
         model: MODEL,
         max_tokens: 2048,
         system,
-        tools: cachedTools,
+        tools: betaTools,
         messages,
+        betas: BETAS,
+        ...(containerParam ? { container: containerParam } : {}),
       });
 
-      const toolUseBlocks: Anthropic.ContentBlock[] = [];
+      const toolUseBlocks: BetaContentBlock[] = [];
       let currentText = "";
 
       for await (const event of stream) {
@@ -143,7 +166,12 @@ export class AIRouter {
 
       const response = await stream.finalMessage();
 
-      // Collect client-side tool_use blocks (skip server_tool_use / web_search_tool_result)
+      // Track container ID for reuse within this conversation turn
+      if (response.container?.id) {
+        containerId = response.container.id;
+      }
+
+      // Collect client-side tool_use blocks (skip server-side results)
       for (const block of response.content) {
         if (block.type === "tool_use") {
           toolUseBlocks.push(block);
@@ -152,7 +180,7 @@ export class AIRouter {
 
       if (response.stop_reason === "tool_use") {
         // Add assistant message with all content
-        messages.push({ role: "assistant", content: response.content });
+        messages.push({ role: "assistant", content: response.content as Anthropic.ContentBlock[] });
 
         // Execute tools
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
@@ -186,8 +214,15 @@ export class AIRouter {
 
         messages.push({ role: "user", content: toolResults });
         // Loop again for Claude's response after tool results
+      } else if (response.stop_reason === "pause_turn") {
+        // Long-running skill execution paused mid-turn. Text from this iteration
+        // was already streamed to the user via onText callbacks, so we just
+        // accumulate it into finalText and re-submit with the same container ID
+        // to let the model continue where it left off.
+        messages.push({ role: "assistant", content: response.content as Anthropic.ContentBlock[] });
+        finalText += currentText;
       } else {
-        finalText = currentText;
+        finalText += currentText;
         done = true;
       }
     }

@@ -4,6 +4,62 @@ import { getTasksClient } from "./client.js";
 
 const taskListCache = new Map<string, string>();
 
+interface TaskMatch {
+  taskId: string;
+  title: string;
+  listId: string;
+  listName: string;
+}
+
+async function findTasksAcrossLists(
+  query: string,
+  opts: { includeCompleted?: boolean } = {},
+): Promise<TaskMatch[]> {
+  const client = await getTasksClient();
+  const searchTerm = query.toLowerCase();
+  const listsResponse = await client.tasklists.list({ maxResults: 100 });
+  const matches: TaskMatch[] = [];
+
+  for (const taskList of listsResponse.data.items || []) {
+    if (!taskList.id || !taskList.title) continue;
+    const listName = taskList.title.toLowerCase();
+    taskListCache.set(listName, taskList.id);
+
+    const tasksResponse = await client.tasks.list({
+      tasklist: taskList.id,
+      maxResults: 100,
+      showCompleted: opts.includeCompleted ?? false,
+      showHidden: opts.includeCompleted ?? false,
+    });
+
+    for (const t of tasksResponse.data.items || []) {
+      if (t.id && t.title?.toLowerCase().includes(searchTerm)) {
+        matches.push({
+          taskId: t.id,
+          title: t.title,
+          listId: taskList.id,
+          listName,
+        });
+      }
+    }
+  }
+
+  return matches;
+}
+
+function pickBestMatch(
+  matches: TaskMatch[],
+  query: string,
+): { type: "found"; match: TaskMatch } | { type: "ambiguous"; matches: TaskMatch[] } | { type: "none" } {
+  if (matches.length === 0) return { type: "none" };
+  if (matches.length === 1) return { type: "found", match: matches[0]! };
+
+  const exact = matches.filter((m) => m.title.toLowerCase() === query.toLowerCase());
+  if (exact.length === 1) return { type: "found", match: exact[0]! };
+
+  return { type: "ambiguous", matches: exact.length > 1 ? exact : matches };
+}
+
 async function resolveTaskListId(name: string): Promise<string> {
   name = name.toLowerCase();
   const cached = taskListCache.get(name);
@@ -85,6 +141,21 @@ const tools: Anthropic.Tool[] = [
         title: {
           type: "string",
           description: "The task title (or partial match) to mark as completed",
+        },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "delete_task",
+    description:
+      "Permanently delete a task by its title (partial match supported). Use this when a task was added to the wrong list, is a duplicate, or should be fully removed rather than completed.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        title: {
+          type: "string",
+          description: "The task title (or partial match) to delete",
         },
       },
       required: ["title"],
@@ -182,38 +253,53 @@ async function listTasks(input: Record<string, unknown>): Promise<unknown> {
 
 async function completeTask(input: Record<string, unknown>): Promise<unknown> {
   const client = await getTasksClient();
-  const title = (input["title"] as string).toLowerCase();
+  const title = input["title"] as string;
+  const matches = await findTasksAcrossLists(title);
+  const result = pickBestMatch(matches, title);
 
-  // Search across all lists for a partial title match
-  const listsResponse = await client.tasklists.list({ maxResults: 100 });
-
-  for (const taskList of listsResponse.data.items || []) {
-    if (!taskList.id || !taskList.title) continue;
-    const listName = taskList.title.toLowerCase();
-    taskListCache.set(listName, taskList.id);
-
-    const tasksResponse = await client.tasks.list({
-      tasklist: taskList.id,
-      maxResults: 100,
-      showCompleted: false,
-    });
-
-    const match = (tasksResponse.data.items || []).find((t) =>
-      t.title?.toLowerCase().includes(title),
-    );
-
-    if (match && match.id) {
-      await client.tasks.patch({
-        tasklist: taskList.id,
-        task: match.id,
-        requestBody: { status: "completed" },
-      });
-
-      return { success: true, title: match.title, list: listName };
-    }
+  if (result.type === "none") {
+    return { success: false, error: `No open task matching "${title}" found` };
+  }
+  if (result.type === "ambiguous") {
+    return {
+      success: false,
+      error: `Multiple tasks match "${title}": ${result.matches.map((m) => `"${m.title}" (${m.listName})`).join(", ")}. Be more specific.`,
+    };
   }
 
-  return { success: false, error: `No open task matching "${input["title"]}" found` };
+  const { match } = result;
+  await client.tasks.patch({
+    tasklist: match.listId,
+    task: match.taskId,
+    requestBody: { status: "completed" },
+  });
+
+  return { success: true, title: match.title, list: match.listName };
+}
+
+async function deleteTask(input: Record<string, unknown>): Promise<unknown> {
+  const client = await getTasksClient();
+  const title = input["title"] as string;
+  const matches = await findTasksAcrossLists(title, { includeCompleted: true });
+  const result = pickBestMatch(matches, title);
+
+  if (result.type === "none") {
+    return { success: false, error: `No task matching "${title}" found` };
+  }
+  if (result.type === "ambiguous") {
+    return {
+      success: false,
+      error: `Multiple tasks match "${title}": ${result.matches.map((m) => `"${m.title}" (${m.listName})`).join(", ")}. Be more specific.`,
+    };
+  }
+
+  const { match } = result;
+  await client.tasks.delete({
+    tasklist: match.listId,
+    task: match.taskId,
+  });
+
+  return { success: true, title: match.title, list: match.listName };
 }
 
 export const googleTasksModule: Module = {
@@ -228,6 +314,8 @@ export const googleTasksModule: Module = {
         return listTasks(input);
       case "complete_task":
         return completeTask(input);
+      case "delete_task":
+        return deleteTask(input);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }

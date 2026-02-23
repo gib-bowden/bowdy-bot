@@ -5,8 +5,8 @@ import { ConsolePlatform } from "./platform/console.js";
 import type { Platform } from "./platform/types.js";
 import { ModuleRegistry } from "./modules/registry.js";
 import { AIRouter } from "./ai/router.js";
-import { tasksModule } from "./modules/tasks/index.js";
 import { calendarModule } from "./modules/calendar/index.js";
+import type { BetaSkillParams } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 
 // Ensure DB schema exists
 ensureSchema();
@@ -29,16 +29,23 @@ if (googleOAuthConfigured) {
   const { googleTasksModule } = await import("./modules/google-tasks/index.js");
   registry.register(googleTasksModule);
   logger.info("Using Google Tasks backend (OAuth)");
-} else {
-  registry.register(tasksModule);
 }
 
 if (googleOAuthConfigured && config.googleCalendarId) {
   registry.register(calendarModule);
 }
 
+// Sync skills (best-effort — continue without them on failure)
+let skills: BetaSkillParams[] = [];
+try {
+  const { syncSkills } = await import("./skills/manager.js");
+  skills = await syncSkills();
+} catch (err) {
+  logger.warn({ err }, "Failed to sync skills, continuing without them");
+}
+
 // Create AI router
-const router = new AIRouter(registry);
+const router = new AIRouter(registry, skills);
 
 // Select platform
 let platform: Platform;
