@@ -33,9 +33,21 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
 
   const db = getDb();
 
-  const account = email
+  let account = email
     ? db.select().from(googleAccounts).where(eq(googleAccounts.email, email)).get()
     : db.select().from(googleAccounts).where(eq(googleAccounts.isDefault, true)).get();
+
+  // Fallback: if no default is set but accounts exist, use the first one and mark it default
+  if (!account && !email) {
+    account = db.select().from(googleAccounts).get();
+    if (account) {
+      db.update(googleAccounts)
+        .set({ isDefault: true })
+        .where(eq(googleAccounts.email, account.email))
+        .run();
+      logger.info({ email: account.email }, "Auto-set default Google account");
+    }
+  }
 
   if (!account) {
     throw new Error(
@@ -94,6 +106,9 @@ export async function handleAuthCallback(code: string): Promise<{ email: string;
   const existing = db.select().from(googleAccounts).where(eq(googleAccounts.email, email)).get();
 
   if (existing) {
+    // Ensure account is marked as default if no other default exists
+    const hasDefault = db.select().from(googleAccounts).where(eq(googleAccounts.isDefault, true)).get();
+
     db.update(googleAccounts)
       .set({
         name,
@@ -101,6 +116,7 @@ export async function handleAuthCallback(code: string): Promise<{ email: string;
         accessToken: tokens.access_token ? encrypt(tokens.access_token) : null,
         tokenExpiry: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
         scopes: tokens.scope ?? existing.scopes,
+        isDefault: existing.isDefault || !hasDefault,
         updatedAt: new Date().toISOString(),
       })
       .where(eq(googleAccounts.email, email))
@@ -140,6 +156,8 @@ export function removeAccount(email: string) {
   if (!account) return false;
 
   db.delete(googleAccounts).where(eq(googleAccounts.email, email)).run();
+  authClientCache.delete(email);
+  authClientCache.delete("__default__");
 
   if (account.isDefault) {
     const next = db.select().from(googleAccounts).get();
