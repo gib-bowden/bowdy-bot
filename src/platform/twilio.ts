@@ -51,7 +51,7 @@ function parseFormUrlEncoded(body: string): Record<string, string> {
 
 export class TwilioPlatform implements Platform {
   private server: ReturnType<typeof createServer> | null = null;
-  private client: Twilio;
+  private client: InstanceType<typeof Twilio>;
   private allowlist: Map<string, string>;
   private port: number;
 
