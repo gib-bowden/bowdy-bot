@@ -13,7 +13,13 @@ ensureSchema();
 
 // Register modules
 const registry = new ModuleRegistry();
-registry.register(tasksModule);
+if (config.googleTasksEnabled && config.googleServiceAccountKeyPath) {
+  const { googleTasksModule } = await import("./modules/google-tasks/index.js");
+  registry.register(googleTasksModule);
+  logger.info("Using Google Tasks backend");
+} else {
+  registry.register(tasksModule);
+}
 if (config.googleServiceAccountKeyPath && config.googleCalendarId) {
   registry.register(calendarModule);
 }

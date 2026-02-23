@@ -6,9 +6,13 @@ import { getConversationHistory, saveMessage } from "../db/conversation.js";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
 
-function getSystemPrompt(username: string): string {
+function getSystemPrompt(username: string, platform: string): string {
   const now = new Date().toLocaleDateString("en-CA", { timeZone: config.timezone }); // YYYY-MM-DD
   const day = new Date().toLocaleDateString("en-US", { timeZone: config.timezone, weekday: "long" });
+  const formatting =
+    platform === "groupme" || platform === "twilio"
+      ? "You are responding in a plain-text chat app. Do NOT use markdown formatting (no **bold**, *italics*, headers, or links). Use plain text only — dashes for lists, ALL CAPS sparingly for emphasis if needed."
+      : "";
   return `You are Bowdy Bot, a helpful family assistant for the Bowden household.
 You help with tasks, groceries, calendar, and general questions.
 Be concise, friendly, and practical. You're talking to family members, so be warm but efficient.
@@ -16,10 +20,10 @@ When a user asks you to do something actionable (add a task, check the calendar,
 For general conversation, just respond naturally.
 Today is ${day}, ${now}. The family's timezone is ${config.timezone}.
 You can search the web for current information like weather, news, sports scores, and more.
-You are currently talking to ${username}.`;
+You are currently talking to ${username}.${formatting ? "\n" + formatting : ""}`;
 }
 
-const MODEL = "claude-sonnet-4-20250514";
+const MODEL = "claude-sonnet-4-6";
 
 export interface StreamCallbacks {
   onText?: (chunk: string) => void;
@@ -53,7 +57,7 @@ export class AIRouter {
 
     // System prompt with cache control
     const system: Anthropic.TextBlockParam[] = [
-      { type: "text", text: getSystemPrompt(message.platformUsername), cache_control: { type: "ephemeral" } },
+      { type: "text", text: getSystemPrompt(message.platformUsername, message.platform), cache_control: { type: "ephemeral" } },
     ];
 
     // Web search server tool — executed server-side by Anthropic

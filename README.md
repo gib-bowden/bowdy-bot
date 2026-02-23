@@ -257,7 +257,7 @@ Railway automatically assigns a `PORT` env var which the Twilio adapter uses.
 
 ## API Costs
 
-The bot uses `claude-sonnet-4-20250514`. Typical family usage costs pennies per day:
+The bot uses `claude-sonnet-4-6`. Typical family usage costs pennies per day:
 
 - Each message exchange: ~$0.01–0.05
 - $5–10 of credit will last a long time

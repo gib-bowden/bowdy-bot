@@ -48,4 +48,6 @@ export const config = {
   timezone: optional("TZ", "America/Chicago"),
   googleServiceAccountKeyPath: resolveGoogleServiceAccountKeyPath(),
   googleCalendarId: process.env["GOOGLE_CALENDAR_ID"] ?? "",
+  googleTasksEnabled:
+    (process.env["GOOGLE_TASKS_ENABLED"] ?? "").toLowerCase() === "true",
 } as const;
