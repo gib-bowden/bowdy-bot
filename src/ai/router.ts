@@ -56,11 +56,21 @@ export class AIRouter {
 
     // Load conversation history
     const history = await getConversationHistory(message.platformUserId);
+
+    // Build user content — text + optional images
+    const userContent: Anthropic.ContentBlockParam[] = [];
+    if (message.imageUrls?.length) {
+      for (const url of message.imageUrls) {
+        userContent.push({ type: "image", source: { type: "url", url } });
+      }
+    }
+    userContent.push({ type: "text", text: message.text || "What's in this image?" });
+
     const messages: Anthropic.MessageParam[] = [
       ...history.map(
         (h) => ({ role: h.role, content: h.content }) as Anthropic.MessageParam,
       ),
-      { role: "user", content: message.text },
+      { role: "user", content: userContent },
     ];
 
     // Save the user message

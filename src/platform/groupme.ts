@@ -94,7 +94,7 @@ export class GroupMePlatform implements Platform {
 
   async start(handler: MessageHandler): Promise<void> {
     let processing = false;
-    const queue: Array<{ senderId: string; senderName: string; text: string }> =
+    const queue: Array<{ senderId: string; senderName: string; text: string; imageUrls?: string[] }> =
       [];
 
     const processQueue = async () => {
@@ -109,6 +109,7 @@ export class GroupMePlatform implements Platform {
           platformUsername: item.senderName,
           text: item.text,
           platform: "groupme",
+          imageUrls: item.imageUrls,
         };
 
         logger.info(
@@ -183,14 +184,26 @@ export class GroupMePlatform implements Platform {
           return;
         }
 
-        if (!payload.text) {
-          logger.debug("Received webhook without text");
+        // Extract image URLs from attachments
+        const imageUrls: string[] = [];
+        if (Array.isArray(payload.attachments)) {
+          for (const att of payload.attachments) {
+            const a = att as Record<string, unknown>;
+            if (a.type === "image" && typeof a.url === "string") {
+              imageUrls.push(a.url);
+            }
+          }
+        }
+
+        if (!payload.text && imageUrls.length === 0) {
+          logger.debug("Received webhook without text or images");
           return;
         }
 
-        const rawText = payload.text.trim();
+        const rawText = (payload.text ?? "").trim();
 
         // In group chats, only respond when directly addressed
+        // Images without text still need a trigger word — skip if no text at all
         if (!isDirectedAtBot(rawText)) {
           logger.debug(
             { user: payload.name, text: rawText },
@@ -203,6 +216,7 @@ export class GroupMePlatform implements Platform {
           senderId: payload.sender_id,
           senderName: payload.name,
           text: rawText,
+          imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
         });
         processQueue();
       });

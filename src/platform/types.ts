@@ -5,6 +5,7 @@ export interface IncomingMessage {
   platformUsername: string;
   text: string;
   platform: "console" | "telegram" | "twilio" | "groupme";
+  imageUrls?: string[];
 }
 
 export type MessageHandler = (message: IncomingMessage, callbacks?: StreamCallbacks) => Promise<string>;
