@@ -14,6 +14,9 @@ const SCOPES = [
   "https://www.googleapis.com/auth/userinfo.profile",
 ];
 
+const AUTH_CLIENT_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const authClientCache = new Map<string, { client: OAuth2Client; expiresAt: number }>();
+
 export function createOAuth2Client(): OAuth2Client {
   return new google.auth.OAuth2(
     config.googleClientId,
@@ -23,6 +26,10 @@ export function createOAuth2Client(): OAuth2Client {
 }
 
 export async function getAuthClient(email?: string): Promise<OAuth2Client> {
+  const cacheKey = email ?? "__default__";
+  const cached = authClientCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) return cached.client;
+
   const db = getDb();
 
   const account = email
@@ -57,6 +64,7 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
     logger.debug({ email: account.email }, "Refreshed Google OAuth tokens");
   });
 
+  authClientCache.set(cacheKey, { client, expiresAt: Date.now() + AUTH_CLIENT_TTL_MS });
   return client;
 }
 
@@ -83,7 +91,6 @@ export async function handleAuthCallback(code: string): Promise<{ email: string;
   const db = getDb();
 
   const existing = db.select().from(googleAccounts).where(eq(googleAccounts.email, email)).get();
-  const hasAnyAccount = db.select().from(googleAccounts).get();
 
   if (existing) {
     db.update(googleAccounts)
@@ -98,16 +105,21 @@ export async function handleAuthCallback(code: string): Promise<{ email: string;
       .where(eq(googleAccounts.email, email))
       .run();
   } else {
+    if (!tokens.refresh_token) {
+      throw new Error("No refresh token received from Google. Please try connecting again.");
+    }
+
+    const isFirstAccount = !db.select().from(googleAccounts).get();
     db.insert(googleAccounts)
       .values({
         id: ulid(),
         email,
         name,
-        refreshToken: tokens.refresh_token!,
+        refreshToken: tokens.refresh_token,
         accessToken: tokens.access_token ?? null,
         tokenExpiry: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
         scopes: tokens.scope ?? SCOPES.join(" "),
-        isDefault: !hasAnyAccount,
+        isDefault: isFirstAccount,
       })
       .run();
   }

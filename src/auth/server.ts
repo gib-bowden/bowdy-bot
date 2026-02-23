@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, IncomingMessage } from "node:http";
 import { URL } from "node:url";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
@@ -9,6 +9,15 @@ import {
   removeAccount,
   setDefaultAccount,
 } from "./google.js";
+
+function esc(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function html(body: string): string {
   return `<!DOCTYPE html>
@@ -21,7 +30,9 @@ function html(body: string): string {
   .name { font-weight: 600; }
   .email { color: #666; font-size: 0.9em; }
   .badge { background: #4285f4; color: white; font-size: 0.75em; padding: 2px 8px; border-radius: 10px; margin-left: 8px; }
-  .actions a { margin-left: 12px; font-size: 0.85em; }
+  .actions form { display: inline; margin-left: 12px; }
+  .actions button { background: none; border: none; cursor: pointer; font-size: 0.85em; color: #4285f4; padding: 0; }
+  .actions button.danger { color: #d32f2f; }
   .btn { display: inline-block; padding: 10px 24px; background: #4285f4; color: white; text-decoration: none; border-radius: 6px; margin-top: 16px; }
   .btn:hover { background: #3367d6; }
   .msg { padding: 12px; background: #e8f5e9; border-radius: 8px; margin: 12px 0; }
@@ -33,25 +44,34 @@ function accountsPage(message?: string, error?: string): string {
   const accounts = listAccounts();
   let body = "<h1>Bowdy Bot — Google Accounts</h1>";
 
-  if (message) body += `<div class="msg">${message}</div>`;
-  if (error) body += `<div class="err">${error}</div>`;
+  if (message) body += `<div class="msg">${esc(message)}</div>`;
+  if (error) body += `<div class="err">${esc(error)}</div>`;
 
   if (accounts.length === 0) {
     body += "<p>No Google accounts connected yet.</p>";
   } else {
     for (const a of accounts) {
       body += `<div class="account${a.isDefault ? " default" : ""}">
-        <div><span class="name">${a.name}</span>${a.isDefault ? '<span class="badge">default</span>' : ""}
-          <br><span class="email">${a.email}</span></div>
+        <div><span class="name">${esc(a.name)}</span>${a.isDefault ? '<span class="badge">default</span>' : ""}
+          <br><span class="email">${esc(a.email)}</span></div>
         <div class="actions">
-          ${!a.isDefault ? `<a href="/oauth/default?email=${encodeURIComponent(a.email)}">Set default</a>` : ""}
-          <a href="/oauth/remove?email=${encodeURIComponent(a.email)}" style="color:#d32f2f">Remove</a>
+          ${!a.isDefault ? `<form method="POST" action="/oauth/default"><input type="hidden" name="email" value="${esc(a.email)}"><button type="submit">Set default</button></form>` : ""}
+          <form method="POST" action="/oauth/remove"><input type="hidden" name="email" value="${esc(a.email)}"><button type="submit" class="danger">Remove</button></form>
         </div></div>`;
     }
   }
 
   body += `<a class="btn" href="/oauth/start">Connect Google Account</a>`;
   return html(body);
+}
+
+function parseFormBody(req: IncomingMessage): Promise<URLSearchParams> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => resolve(new URLSearchParams(Buffer.concat(chunks).toString())));
+    req.on("error", reject);
+  });
 }
 
 export function startOAuthServer(): void {
@@ -62,8 +82,9 @@ export function startOAuthServer(): void {
 
     try {
       if (url.pathname === "/" && req.method === "GET") {
+        const msg = url.searchParams.get("msg") ?? undefined;
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(accountsPage());
+        res.end(accountsPage(msg));
         return;
       }
 
@@ -96,34 +117,29 @@ export function startOAuthServer(): void {
         return;
       }
 
-      if (url.pathname === "/oauth/remove" && req.method === "GET") {
-        const email = url.searchParams.get("email");
+      if (url.pathname === "/oauth/remove" && req.method === "POST") {
+        const form = await parseFormBody(req);
+        const email = form.get("email");
         if (email) {
           removeAccount(email);
-          res.writeHead(302, { Location: `/?msg=${encodeURIComponent(`Removed ${email}`)}` });
+          res.writeHead(303, { Location: `/?msg=${encodeURIComponent(`Removed ${email}`)}` });
         } else {
-          res.writeHead(302, { Location: "/" });
+          res.writeHead(303, { Location: "/" });
         }
         res.end();
         return;
       }
 
-      if (url.pathname === "/oauth/default" && req.method === "GET") {
-        const email = url.searchParams.get("email");
+      if (url.pathname === "/oauth/default" && req.method === "POST") {
+        const form = await parseFormBody(req);
+        const email = form.get("email");
         if (email) {
           setDefaultAccount(email);
-          res.writeHead(302, { Location: `/?msg=${encodeURIComponent(`${email} set as default`)}` });
+          res.writeHead(303, { Location: `/?msg=${encodeURIComponent(`${email} set as default`)}` });
         } else {
-          res.writeHead(302, { Location: "/" });
+          res.writeHead(303, { Location: "/" });
         }
         res.end();
-        return;
-      }
-
-      // Handle message param on index
-      if (url.pathname === "/" && url.searchParams.has("msg")) {
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(accountsPage(url.searchParams.get("msg")!));
         return;
       }
 
