@@ -13,15 +13,24 @@ ensureSchema();
 
 // Register modules
 const registry = new ModuleRegistry();
-if (config.googleTasksEnabled && config.googleServiceAccountKeyPath) {
+const googleOAuthConfigured = !!(config.googleClientId && config.googleClientSecret);
+
+if (googleOAuthConfigured) {
   const { googleTasksModule } = await import("./modules/google-tasks/index.js");
   registry.register(googleTasksModule);
-  logger.info("Using Google Tasks backend");
+  logger.info("Using Google Tasks backend (OAuth)");
 } else {
   registry.register(tasksModule);
 }
-if (config.googleServiceAccountKeyPath && config.googleCalendarId) {
+
+if (googleOAuthConfigured && config.googleCalendarId) {
   registry.register(calendarModule);
+}
+
+// Start OAuth server if Google OAuth is configured
+if (googleOAuthConfigured) {
+  const { startOAuthServer } = await import("./auth/server.js");
+  startOAuthServer();
 }
 
 // Create AI router

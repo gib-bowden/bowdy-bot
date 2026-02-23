@@ -1,7 +1,4 @@
 import "dotenv/config";
-import { writeFileSync, mkdtempSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 function required(key: string): string {
   const value = process.env[key];
@@ -13,19 +10,6 @@ function required(key: string): string {
 
 function optional(key: string, defaultValue: string): string {
   return process.env[key] || defaultValue;
-}
-
-function resolveGoogleServiceAccountKeyPath(): string {
-  const filePath = process.env["GOOGLE_SERVICE_ACCOUNT_KEY_PATH"] ?? "";
-  if (filePath) return filePath;
-
-  const base64Key = process.env["GOOGLE_SERVICE_ACCOUNT_KEY"] ?? "";
-  if (!base64Key) return "";
-
-  const tempDir = mkdtempSync(join(tmpdir(), "bowdy-bot-"));
-  const tempPath = join(tempDir, "google-service-account.json");
-  writeFileSync(tempPath, Buffer.from(base64Key, "base64"), "utf-8");
-  return tempPath;
 }
 
 export const config = {
@@ -46,8 +30,9 @@ export const config = {
   logLevel: optional("LOG_LEVEL", "info"),
   dbPath: optional("DB_PATH", "./data/bowdy-bot.db"),
   timezone: optional("TZ", "America/Chicago"),
-  googleServiceAccountKeyPath: resolveGoogleServiceAccountKeyPath(),
+  googleClientId: process.env["GOOGLE_CLIENT_ID"] ?? "",
+  googleClientSecret: process.env["GOOGLE_CLIENT_SECRET"] ?? "",
+  googleOAuthRedirectUri: optional("GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:3001/oauth/callback"),
+  googleOAuthPort: optional("GOOGLE_OAUTH_PORT", "3001"),
   googleCalendarId: process.env["GOOGLE_CALENDAR_ID"] ?? "",
-  googleTasksEnabled:
-    (process.env["GOOGLE_TASKS_ENABLED"] ?? "").toLowerCase() === "true",
 } as const;

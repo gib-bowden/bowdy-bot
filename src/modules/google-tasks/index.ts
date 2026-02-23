@@ -9,7 +9,7 @@ async function resolveTaskListId(name: string): Promise<string> {
   const cached = taskListCache.get(name);
   if (cached) return cached;
 
-  const client = getTasksClient();
+  const client = await getTasksClient();
 
   // Fetch all task lists and populate cache
   const response = await client.tasklists.list({ maxResults: 100 });
@@ -93,7 +93,7 @@ const tools: Anthropic.Tool[] = [
 ];
 
 async function addTask(input: Record<string, unknown>): Promise<unknown> {
-  const client = getTasksClient();
+  const client = await getTasksClient();
   const title = input["title"] as string;
   const list = (input["list"] as string) || "general";
   const dueDate = input["due_date"] as string | undefined;
@@ -117,7 +117,7 @@ async function addTask(input: Record<string, unknown>): Promise<unknown> {
 }
 
 async function listTasks(input: Record<string, unknown>): Promise<unknown> {
-  const client = getTasksClient();
+  const client = await getTasksClient();
   const list = (input["list"] as string) || "all";
   const includeCompleted = (input["include_completed"] as boolean) ?? false;
 
@@ -181,7 +181,7 @@ async function listTasks(input: Record<string, unknown>): Promise<unknown> {
 }
 
 async function completeTask(input: Record<string, unknown>): Promise<unknown> {
-  const client = getTasksClient();
+  const client = await getTasksClient();
   const title = (input["title"] as string).toLowerCase();
 
   // Search across all lists for a partial title match
