@@ -7,7 +7,7 @@ Family AI assistant for the Bowden household — manages tasks, groceries, calen
 - **Runtime**: Node.js 22+, TypeScript, ESM (`"type": "module"`)
 - **AI**: Anthropic Claude SDK (claude-sonnet-4-20250514) with tool_use for routing
 - **Database**: SQLite via better-sqlite3 + Drizzle ORM
-- **Platforms**: Console (default), Telegram (grammy), Twilio SMS
+- **Platforms**: Console (default), Telegram (grammy), Twilio SMS, GroupMe
 - **Calendar**: Google Calendar API via `googleapis` package (service account auth)
 
 ## Project Structure
@@ -34,6 +34,7 @@ src/
     console.ts      # Console (stdin/stdout) adapter
     telegram.ts     # Telegram adapter (long-polling via grammy)
     twilio.ts       # Twilio SMS adapter (HTTP webhook + REST API)
+    groupme.ts      # GroupMe adapter (webhook + REST API)
 ```
 
 ## Key Patterns
@@ -59,6 +60,6 @@ npm run build && npm start  # Smoke-test production bundle before pushing
 
 Required: `ANTHROPIC_API_KEY`
 
-Optional: `PLATFORM`, `TELEGRAM_BOT_TOKEN`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `TWILIO_ALLOWLIST`, `TWILIO_WEBHOOK_PORT`, `LOG_LEVEL`, `DB_PATH`, `TZ`, `GOOGLE_SERVICE_ACCOUNT_KEY_PATH`, `GOOGLE_SERVICE_ACCOUNT_KEY` (base64-encoded JSON, alternative to file path), `GOOGLE_CALENDAR_ID`
+Optional: `PLATFORM`, `TELEGRAM_BOT_TOKEN`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `TWILIO_ALLOWLIST`, `TWILIO_WEBHOOK_PORT`, `GROUPME_BOT_ID`, `GROUPME_WEBHOOK_PORT`, `LOG_LEVEL`, `DB_PATH`, `TZ`, `GOOGLE_SERVICE_ACCOUNT_KEY_PATH`, `GOOGLE_SERVICE_ACCOUNT_KEY` (base64-encoded JSON, alternative to file path), `GOOGLE_CALENDAR_ID`
 
 See `.env.example` for full list with defaults.

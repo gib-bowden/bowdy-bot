@@ -29,6 +29,9 @@ if (config.platform === "telegram") {
 } else if (config.platform === "twilio") {
   const { TwilioPlatform } = await import("./platform/twilio.js");
   platform = new TwilioPlatform();
+} else if (config.platform === "groupme") {
+  const { GroupMePlatform } = await import("./platform/groupme.js");
+  platform = new GroupMePlatform();
 } else {
   platform = new ConsolePlatform();
 }

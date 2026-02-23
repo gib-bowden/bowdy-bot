@@ -64,6 +64,7 @@ The bot uses long-polling, so it works without a public URL or webhook setup.
 SMS via a dedicated Twilio phone number. Works on any server — not tied to macOS like iMessage.
 
 **Setup**:
+
 1. Create a [Twilio account](https://www.twilio.com/) and buy a phone number (~$1.50/month)
 2. In the Twilio console, set the number's "A message comes in" webhook to `https://your-server:3000/` (POST)
 3. Update `.env`:
@@ -81,6 +82,70 @@ The allowlist works the same as iMessage — comma-separated `phone:Name` pairs.
 
 For local development, use [ngrok](https://ngrok.com/) to expose the webhook port: `ngrok http 3000`.
 
+### GroupMe
+
+Group chat via a GroupMe bot. Free, instant setup — no phone number or approval needed. The bot lives in a GroupMe group and responds to all messages from group members.
+
+#### 1. Create a GroupMe Bot
+
+1. Open [dev.groupme.com](https://dev.groupme.com/) and sign in with your GroupMe account
+2. Click **Bots** in the top nav
+3. Click **Create Bot**
+4. Fill in the form:
+   - **Group**: Select the family group chat (or create one first in the GroupMe app)
+   - **Name**: Whatever you want the bot to appear as (e.g. "Bowdy")
+   - **Callback URL**: Leave blank for now — you'll set this after deploying
+   - **Avatar URL**: Optional — paste a URL to an image for the bot's avatar
+5. Click **Submit**
+6. On the next page, copy the **Bot ID** (a long alphanumeric string)
+
+#### 2. Configure Environment
+
+Update your `.env`:
+
+```
+PLATFORM=groupme
+GROUPME_BOT_ID=your-bot-id-here
+```
+
+#### 3. Test Locally
+
+```bash
+# Start the bot
+npx tsx src/index.ts
+
+# In another terminal, expose the webhook with ngrok
+ngrok http 3000
+```
+
+Copy the ngrok HTTPS URL (e.g. `https://abc123.ngrok-free.app`) and go back to [dev.groupme.com](https://dev.groupme.com/) → **Bots** → click your bot → **Edit** → paste the URL into **Callback URL** → **Submit**.
+
+Send a message in the GroupMe group — the bot should respond.
+
+#### 4. Deploy to Railway
+
+For always-on hosting:
+
+1. In the [Railway dashboard](https://railway.com/), set these environment variables:
+   ```
+   PLATFORM=groupme
+   GROUPME_BOT_ID=your-bot-id-here
+   ANTHROPIC_API_KEY=sk-ant-...
+   DB_PATH=/data/bowdy-bot.db
+   TZ=America/Chicago
+   ```
+2. Deploy and copy the Railway public URL from the **Settings** → **Networking** → **Public Networking** section (generate a domain if needed)
+3. Go to [dev.groupme.com](https://dev.groupme.com/) → **Bots** → click your bot → **Edit**
+4. Set **Callback URL** to your Railway URL (e.g. `https://bowdy-bot-production.up.railway.app`)
+5. **Submit** — messages in the group now route to the deployed bot
+
+#### Notes
+
+- **Group-only**: GroupMe bots can only read and post in the group they're created for — no DMs
+- **No allowlist needed**: Group membership is the access control
+- **Loop prevention**: Bot messages (`sender_type === "bot"`) and system messages are automatically ignored
+- **Message splitting**: Long responses are split at ~1000 characters (GroupMe's limit) at natural break points
+
 ### WhatsApp (Planned)
 
 WhatsApp integration is on the roadmap. The likely approach:
@@ -96,13 +161,13 @@ When implemented, it will follow the same adapter pattern as Telegram — a new 
 
 Manage to-do lists and grocery lists with natural language:
 
-| What you can say | What happens |
-|---|---|
-| "Add eggs to the grocery list" | Adds "eggs" to the grocery list |
-| "I need to call the vet" | Adds to the general task list |
-| "What's on my grocery list?" | Shows all open grocery items |
-| "Show me all my tasks" | Shows everything across all lists |
-| "Mark eggs as done" | Completes the matching item |
+| What you can say               | What happens                      |
+| ------------------------------ | --------------------------------- |
+| "Add eggs to the grocery list" | Adds "eggs" to the grocery list   |
+| "I need to call the vet"       | Adds to the general task list     |
+| "What's on my grocery list?"   | Shows all open grocery items      |
+| "Show me all my tasks"         | Shows everything across all lists |
+| "Mark eggs as done"            | Completes the matching item       |
 
 Tasks are stored in a local SQLite database at `data/bowdy-bot.db`.
 
@@ -110,12 +175,12 @@ Tasks are stored in a local SQLite database at `data/bowdy-bot.db`.
 
 Google Calendar integration via a GCP service account. Supports viewing, creating, and deleting events:
 
-| What you can say | What happens |
-|---|---|
-| "What's on our calendar this week?" | Lists events for the next 7 days |
-| "What do we have next month?" | Lists events for the next 30 days |
-| "Schedule a dentist appointment Thursday at 2pm" | Creates a calendar event |
-| "Cancel the dentist appointment" | Finds and deletes the matching event |
+| What you can say                                 | What happens                         |
+| ------------------------------------------------ | ------------------------------------ |
+| "What's on our calendar this week?"              | Lists events for the next 7 days     |
+| "What do we have next month?"                    | Lists events for the next 30 days    |
+| "Schedule a dentist appointment Thursday at 2pm" | Creates a calendar event             |
+| "Cancel the dentist appointment"                 | Finds and deletes the matching event |
 
 #### Setup
 
@@ -146,21 +211,23 @@ Anything that isn't a task or calendar request gets a normal conversational resp
 
 All configuration is via environment variables (`.env` file):
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `ANTHROPIC_API_KEY` | Yes | — | Your Anthropic API key |
-| `PLATFORM` | No | `console` | `console`, `telegram`, or `twilio` |
-| `TELEGRAM_BOT_TOKEN` | If telegram | — | Bot token from @BotFather |
-| `TWILIO_ACCOUNT_SID` | If twilio | — | Twilio Account SID |
-| `TWILIO_AUTH_TOKEN` | If twilio | — | Twilio Auth Token |
-| `TWILIO_PHONE_NUMBER` | If twilio | — | Bot's Twilio phone number |
-| `TWILIO_ALLOWLIST` | If twilio | — | Comma-separated `phone:Name` pairs |
-| `TWILIO_WEBHOOK_PORT` | No | `3000` | Port for incoming SMS webhooks |
-| `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
-| `DB_PATH` | No | `./data/bowdy-bot.db` | Path to SQLite database file |
-| `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` | No | — | Path to GCP service account JSON key |
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | No | — | Base64-encoded service account JSON (alternative to file path) |
-| `GOOGLE_CALENDAR_ID` | No | — | Google Calendar ID (e.g. Gmail address) |
+| Variable                          | Required    | Default               | Description                                                    |
+| --------------------------------- | ----------- | --------------------- | -------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY`               | Yes         | —                     | Your Anthropic API key                                         |
+| `PLATFORM`                        | No          | `console`             | `console`, `telegram`, `twilio`, or `groupme`                  |
+| `TELEGRAM_BOT_TOKEN`              | If telegram | —                     | Bot token from @BotFather                                      |
+| `TWILIO_ACCOUNT_SID`              | If twilio   | —                     | Twilio Account SID                                             |
+| `TWILIO_AUTH_TOKEN`               | If twilio   | —                     | Twilio Auth Token                                              |
+| `TWILIO_PHONE_NUMBER`             | If twilio   | —                     | Bot's Twilio phone number                                      |
+| `TWILIO_ALLOWLIST`                | If twilio   | —                     | Comma-separated `phone:Name` pairs                             |
+| `TWILIO_WEBHOOK_PORT`             | No          | `3000`                | Port for incoming SMS webhooks                                 |
+| `GROUPME_BOT_ID`                  | If groupme  | —                     | Bot ID from dev.groupme.com                                    |
+| `GROUPME_WEBHOOK_PORT`            | No          | `3000`                | Port for incoming GroupMe webhooks                             |
+| `LOG_LEVEL`                       | No          | `info`                | `debug`, `info`, `warn`, `error`                               |
+| `DB_PATH`                         | No          | `./data/bowdy-bot.db` | Path to SQLite database file                                   |
+| `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` | No          | —                     | Path to GCP service account JSON key                           |
+| `GOOGLE_SERVICE_ACCOUNT_KEY`      | No          | —                     | Base64-encoded service account JSON (alternative to file path) |
+| `GOOGLE_CALENDAR_ID`              | No          | —                     | Google Calendar ID (e.g. Gmail address)                        |
 
 ## Deploying to Railway
 
@@ -229,7 +296,7 @@ Claude automatically discovers and routes to your module's tools — no intent m
 ## Architecture
 
 ```
-Chat Platform (Console / Telegram / Twilio SMS / WhatsApp)
+Chat Platform (Console / Telegram / Twilio SMS / GroupMe / WhatsApp)
        ↓ normalized IncomingMessage
 AI Router (Claude with tool_use)
        ↓ tool calls
@@ -246,6 +313,7 @@ Claude IS the router. Modules register tools with descriptions, and Claude decid
 - [x] Task & grocery list management
 - [x] Telegram integration
 - [x] Twilio SMS integration
+- [x] GroupMe integration
 - [ ] Conversation history / context window
 - [x] Google Calendar integration
 - [ ] WhatsApp adapter

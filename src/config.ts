@@ -33,13 +33,16 @@ export const config = {
   platform: optional("PLATFORM", "console") as
     | "console"
     | "telegram"
-    | "twilio",
+    | "twilio"
+    | "groupme",
   telegramBotToken: process.env["TELEGRAM_BOT_TOKEN"] ?? "",
   twilioAccountSid: process.env["TWILIO_ACCOUNT_SID"] ?? "",
   twilioAuthToken: process.env["TWILIO_AUTH_TOKEN"] ?? "",
   twilioPhoneNumber: process.env["TWILIO_PHONE_NUMBER"] ?? "",
   twilioAllowlist: process.env["TWILIO_ALLOWLIST"] ?? "",
   twilioWebhookPort: optional("TWILIO_WEBHOOK_PORT", "3000"),
+  groupmeBotId: process.env["GROUPME_BOT_ID"] ?? "",
+  groupmeWebhookPort: optional("GROUPME_WEBHOOK_PORT", "3000"),
   logLevel: optional("LOG_LEVEL", "info"),
   dbPath: optional("DB_PATH", "./data/bowdy-bot.db"),
   timezone: optional("TZ", "America/Chicago"),
