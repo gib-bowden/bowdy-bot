@@ -3,6 +3,7 @@ import twilio from "twilio";
 const { Twilio, validateRequest } = twilio;
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+import type { RequestHandler } from "../auth/server.js";
 import type { IncomingMessage, Platform, MessageHandler } from "./types.js";
 
 const MAX_MESSAGE_LENGTH = 1500;
@@ -51,9 +52,10 @@ function parseFormUrlEncoded(body: string): Record<string, string> {
 
 export class TwilioPlatform implements Platform {
   private server: ReturnType<typeof createServer> | null = null;
-  private client: Twilio;
+  private client: InstanceType<typeof Twilio>;
   private allowlist: Map<string, string>;
   private port: number;
+  private oauthHandler: RequestHandler | null = null;
 
   constructor() {
     if (!config.twilioAccountSid || !config.twilioAuthToken || !config.twilioPhoneNumber) {
@@ -94,6 +96,10 @@ export class TwilioPlatform implements Platform {
       { allowlistSize: this.allowlist.size },
       "Twilio allowlist loaded",
     );
+  }
+
+  setOAuthHandler(handler: RequestHandler): void {
+    this.oauthHandler = handler;
   }
 
   private getAllowedName(phoneNumber: string): string | null {
@@ -150,7 +156,11 @@ export class TwilioPlatform implements Platform {
       processing = false;
     };
 
-    this.server = createServer((req: HttpRequest, res: ServerResponse) => {
+    this.server = createServer(async (req: HttpRequest, res: ServerResponse) => {
+      if (this.oauthHandler && await this.oauthHandler(req, res)) {
+        return;
+      }
+
       if (req.method !== "POST") {
         res.writeHead(405);
         res.end();

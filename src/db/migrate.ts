@@ -33,6 +33,19 @@ export function ensureSchema(): void {
       completed_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS google_accounts (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      refresh_token TEXT NOT NULL,
+      access_token TEXT,
+      token_expiry TEXT,
+      scopes TEXT NOT NULL,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     DROP TABLE IF EXISTS conversation_history;
     CREATE TABLE conversation_history (
       id TEXT PRIMARY KEY,

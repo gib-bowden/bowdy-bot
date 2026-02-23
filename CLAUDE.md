@@ -8,7 +8,7 @@ Family AI assistant for the Bowden household — manages tasks, groceries, calen
 - **AI**: Anthropic Claude SDK (claude-sonnet-4-6) with tool_use for routing
 - **Database**: SQLite via better-sqlite3 + Drizzle ORM
 - **Platforms**: Console (default), Telegram (grammy), Twilio SMS, GroupMe
-- **Calendar**: Google Calendar API via `googleapis` package (service account auth)
+- **Calendar**: Google Calendar API via `googleapis` package (OAuth 2.0)
 
 ## Project Structure
 
@@ -23,6 +23,10 @@ src/
     client.ts       # SQLite connection (getDb(), schema exports)
     schema.ts       # Drizzle schema (users, tasks, conversationHistory)
     migrate.ts      # Schema migration (ensureSchema())
+  auth/
+    google.ts       # Google OAuth account management (token encrypt/decrypt)
+    crypto.ts       # AES-256-GCM token encryption at rest
+    server.ts       # OAuth callback HTTP server
   modules/
     types.ts        # Module interface: { name, description, tools, executeTool }
     registry.ts     # ModuleRegistry — registers modules, routes tool calls
@@ -61,6 +65,6 @@ npm run build && npm start  # Smoke-test production bundle before pushing
 
 Required: `ANTHROPIC_API_KEY`
 
-Optional: `PLATFORM`, `TELEGRAM_BOT_TOKEN`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `TWILIO_ALLOWLIST`, `TWILIO_WEBHOOK_PORT`, `GROUPME_BOT_ID`, `GROUPME_WEBHOOK_PORT`, `LOG_LEVEL`, `DB_PATH`, `TZ`, `GOOGLE_SERVICE_ACCOUNT_KEY_PATH`, `GOOGLE_SERVICE_ACCOUNT_KEY` (base64-encoded JSON, alternative to file path), `GOOGLE_CALENDAR_ID`, `GOOGLE_TASKS_ENABLED`
+Optional: `PLATFORM`, `TELEGRAM_BOT_TOKEN`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `TWILIO_ALLOWLIST`, `TWILIO_WEBHOOK_PORT`, `GROUPME_BOT_ID`, `GROUPME_WEBHOOK_PORT`, `LOG_LEVEL`, `DB_PATH`, `TZ`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`, `GOOGLE_OAUTH_PORT`, `GOOGLE_CALENDAR_ID`, `GOOGLE_TOKEN_ENCRYPTION_KEY` (required when Google OAuth is enabled; generate with `openssl rand -hex 32`)
 
 See `.env.example` for full list with defaults.

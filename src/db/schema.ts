@@ -19,6 +19,19 @@ export const tasks = sqliteTable("tasks", {
   completedAt: text("completed_at"),
 });
 
+export const googleAccounts = sqliteTable("google_accounts", {
+  id: text("id").primaryKey(), // ULID
+  email: text("email").notNull().unique(),
+  name: text("name").notNull(),
+  refreshToken: text("refresh_token").notNull(),
+  accessToken: text("access_token"),
+  tokenExpiry: text("token_expiry"), // ISO datetime
+  scopes: text("scopes").notNull(), // space-separated scopes
+  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
 export const conversationHistory = sqliteTable("conversation_history", {
   id: text("id").primaryKey(), // ULID
   userId: text("user_id").notNull(),

@@ -1,4 +1,5 @@
 import type { StreamCallbacks } from "../ai/router.js";
+import type { RequestHandler } from "../auth/server.js";
 
 export interface IncomingMessage {
   platformUserId: string;
@@ -13,4 +14,5 @@ export type MessageHandler = (message: IncomingMessage, callbacks?: StreamCallba
 export interface Platform {
   start(handler: MessageHandler): Promise<void>;
   stop(): void;
+  setOAuthHandler?(handler: RequestHandler): void;
 }

@@ -171,9 +171,9 @@ Manage to-do lists and grocery lists with natural language:
 
 Tasks are stored in a local SQLite database at `data/bowdy-bot.db`.
 
-### Calendar
+### Calendar & Google Tasks
 
-Google Calendar integration via a GCP service account. Supports viewing, creating, and deleting events:
+Google Calendar and Tasks integration via OAuth 2.0. Supports viewing, creating, and deleting events, plus managing task lists through Google Tasks.
 
 | What you can say                                 | What happens                         |
 | ------------------------------------------------ | ------------------------------------ |
@@ -184,24 +184,58 @@ Google Calendar integration via a GCP service account. Supports viewing, creatin
 
 #### Setup
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com), create a project (or use an existing one)
-2. Enable the **Google Calendar API** (APIs & Services > Library > search "Google Calendar API")
-3. Create a **Service Account** (APIs & Services > Credentials > Create Credentials > Service Account)
-4. Create a key for the service account (Keys tab > Add Key > JSON) and save the downloaded file somewhere safe:
-   ```bash
-   mkdir -p ~/.config/bowdy-bot
-   mv ~/Downloads/your-project-*.json ~/.config/bowdy-bot/google-service-account.json
-   ```
-5. Copy the service account email from the credentials page (looks like `xxx@project.iam.gserviceaccount.com`)
-6. In [Google Calendar settings](https://calendar.google.com/calendar/r/settings), find your shared family calendar, go to "Share with specific people", and add the service account email with **"Make changes to events"** permission
-7. Still in calendar settings, copy the **Calendar ID** (under "Integrate calendar" — for the primary calendar of a Gmail account, it's the Gmail address)
-8. Add to your `.env`:
-   ```
-   GOOGLE_SERVICE_ACCOUNT_KEY_PATH=~/.config/bowdy-bot/google-service-account.json
-   GOOGLE_CALENDAR_ID=family@gmail.com
-   ```
+##### 1. Create a Google Cloud project
 
-The calendar module only loads when both env vars are set. If they're missing, the bot runs fine without calendar features.
+1. Go to [Google Cloud Console](https://console.cloud.google.com) and create a new project (or select an existing one)
+2. Go to **APIs & Services > Library** and enable:
+   - **Google Calendar API**
+   - **Google Tasks API**
+
+##### 2. Configure the OAuth consent screen
+
+1. Go to **APIs & Services > OAuth consent screen**
+2. Select **External** user type (unless you have a Google Workspace org) and click **Create**
+3. Fill in the required fields — app name, user support email, and developer contact email. The rest can be left blank.
+4. On the **Scopes** step, click **Add or Remove Scopes** and add:
+   - `https://www.googleapis.com/auth/calendar`
+   - `https://www.googleapis.com/auth/tasks`
+   - `https://www.googleapis.com/auth/userinfo.email`
+   - `https://www.googleapis.com/auth/userinfo.profile`
+5. On the **Test users** step, add the Google accounts you'll connect (e.g. your family Gmail addresses). While the app is in "Testing" mode, only these accounts can sign in.
+6. Click **Save and Continue** through the rest
+
+##### 3. Create OAuth credentials
+
+1. Go to **APIs & Services > Credentials**
+2. Click **Create Credentials > OAuth client ID**
+3. Select **Web application** as the application type
+4. Under **Authorized redirect URIs**, add: `http://localhost:3001/oauth/callback`
+5. Click **Create** and copy the **Client ID** and **Client Secret**
+
+##### 4. Configure environment
+
+Generate an encryption key for storing tokens at rest:
+
+```bash
+openssl rand -hex 32
+```
+
+Add to your `.env`:
+
+```
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+GOOGLE_CALENDAR_ID=family@gmail.com
+GOOGLE_TOKEN_ENCRYPTION_KEY=your-64-char-hex-key
+```
+
+##### 5. Connect your Google account
+
+1. Start the bot — an OAuth server runs at `http://localhost:3001`
+2. Visit `http://localhost:3001` and sign in with your Google account
+3. The first connected account becomes the default for Calendar and Tasks
+
+The calendar and tasks modules only load when Google OAuth is configured. If the vars are missing, the bot runs fine without these features. OAuth tokens are encrypted at rest using AES-256-GCM.
 
 ### General Chat
 
@@ -225,9 +259,12 @@ All configuration is via environment variables (`.env` file):
 | `GROUPME_WEBHOOK_PORT`            | No          | `3000`                | Port for incoming GroupMe webhooks                             |
 | `LOG_LEVEL`                       | No          | `info`                | `debug`, `info`, `warn`, `error`                               |
 | `DB_PATH`                         | No          | `./data/bowdy-bot.db` | Path to SQLite database file                                   |
-| `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` | No          | —                     | Path to GCP service account JSON key                           |
-| `GOOGLE_SERVICE_ACCOUNT_KEY`      | No          | —                     | Base64-encoded service account JSON (alternative to file path) |
+| `GOOGLE_CLIENT_ID`                | No          | —                     | Google OAuth 2.0 client ID                                     |
+| `GOOGLE_CLIENT_SECRET`            | No          | —                     | Google OAuth 2.0 client secret                                 |
+| `GOOGLE_OAUTH_REDIRECT_URI`      | No          | `http://localhost:3001/oauth/callback` | OAuth callback URL                              |
+| `GOOGLE_OAUTH_PORT`              | No          | `3001`                | Port for the OAuth callback server                             |
 | `GOOGLE_CALENDAR_ID`              | No          | —                     | Google Calendar ID (e.g. Gmail address)                        |
+| `GOOGLE_TOKEN_ENCRYPTION_KEY`     | If Google OAuth | —                 | 32-byte hex key for token encryption (`openssl rand -hex 32`)  |
 
 ## Deploying to Railway
 
@@ -246,14 +283,21 @@ All configuration is via environment variables (`.env` file):
    TWILIO_ALLOWLIST=+16155559999:Gib,+16155558888:Mary Becker
    DB_PATH=/data/bowdy-bot.db
    TZ=America/Chicago
-   GOOGLE_SERVICE_ACCOUNT_KEY=<base64-encoded JSON>
+   GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=your-client-secret
    GOOGLE_CALENDAR_ID=family@gmail.com
+   GOOGLE_TOKEN_ENCRYPTION_KEY=your-64-char-hex-key
+   GOOGLE_OAUTH_REDIRECT_URI=https://your-app.up.railway.app/oauth/callback
    ```
-   To base64-encode the service account key: `base64 -i google-service-account.json | tr -d '\n'`
 5. Deploy — Railway builds the Docker image and starts the container
 6. Copy the Railway public URL and set it as the Twilio webhook URL (POST) for your phone number
+7. Add the Railway URL to your Google OAuth credentials:
+   - Go to [Google Cloud Console](https://console.cloud.google.com) > **APIs & Services > Credentials**
+   - Edit your OAuth client ID
+   - Add `https://your-app.up.railway.app/oauth/callback` as an **Authorized redirect URI**
+8. Visit `https://your-app.up.railway.app/` to connect your Google account
 
-Railway automatically assigns a `PORT` env var which the Twilio adapter uses.
+Railway automatically assigns a `PORT` env var. When using Twilio or GroupMe, the OAuth routes are served on the same port as the webhook — no extra port configuration needed.
 
 ## API Costs
 

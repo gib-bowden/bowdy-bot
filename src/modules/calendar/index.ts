@@ -70,7 +70,7 @@ const tools: Anthropic.Tool[] = [
 ];
 
 async function listEvents(input: Record<string, unknown>): Promise<unknown> {
-  const calendar = getCalendarClient();
+  const calendar = await getCalendarClient();
   const calendarId = getCalendarId();
   const days = (input["days"] as number) || 7;
   const query = input["query"] as string | undefined;
@@ -101,7 +101,7 @@ async function listEvents(input: Record<string, unknown>): Promise<unknown> {
 }
 
 async function createEvent(input: Record<string, unknown>): Promise<unknown> {
-  const calendar = getCalendarClient();
+  const calendar = await getCalendarClient();
   const calendarId = getCalendarId();
 
   const title = input["title"] as string;
@@ -131,7 +131,7 @@ async function createEvent(input: Record<string, unknown>): Promise<unknown> {
 }
 
 async function deleteEvent(input: Record<string, unknown>): Promise<unknown> {
-  const calendar = getCalendarClient();
+  const calendar = await getCalendarClient();
   const calendarId = getCalendarId();
   const title = (input["title"] as string).toLowerCase();
 

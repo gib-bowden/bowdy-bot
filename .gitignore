@@ -4,3 +4,4 @@ data/
 .env
 *.db
 *.db-journal
+skills/.skills-cache.json

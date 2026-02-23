@@ -5,27 +5,47 @@ import { ConsolePlatform } from "./platform/console.js";
 import type { Platform } from "./platform/types.js";
 import { ModuleRegistry } from "./modules/registry.js";
 import { AIRouter } from "./ai/router.js";
-import { tasksModule } from "./modules/tasks/index.js";
 import { calendarModule } from "./modules/calendar/index.js";
+import type { BetaSkillParams } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 
 // Ensure DB schema exists
 ensureSchema();
 
 // Register modules
 const registry = new ModuleRegistry();
-if (config.googleTasksEnabled && config.googleServiceAccountKeyPath) {
+const googleOAuthConfigured = !!(config.googleClientId && config.googleClientSecret);
+
+if (googleOAuthConfigured) {
+  const key = config.googleTokenEncryptionKey;
+  if (!key || !/^[0-9a-f]{64}$/i.test(key)) {
+    throw new Error(
+      "GOOGLE_TOKEN_ENCRYPTION_KEY is required when Google OAuth is configured. " +
+        "Generate one with: openssl rand -hex 32",
+    );
+  }
+}
+
+if (googleOAuthConfigured) {
   const { googleTasksModule } = await import("./modules/google-tasks/index.js");
   registry.register(googleTasksModule);
-  logger.info("Using Google Tasks backend");
-} else {
-  registry.register(tasksModule);
+  logger.info("Using Google Tasks backend (OAuth)");
 }
-if (config.googleServiceAccountKeyPath && config.googleCalendarId) {
+
+if (googleOAuthConfigured && config.googleCalendarId) {
   registry.register(calendarModule);
 }
 
+// Sync skills (best-effort — continue without them on failure)
+let skills: BetaSkillParams[] = [];
+try {
+  const { syncSkills } = await import("./skills/manager.js");
+  skills = await syncSkills();
+} catch (err) {
+  logger.warn({ err }, "Failed to sync skills, continuing without them");
+}
+
 // Create AI router
-const router = new AIRouter(registry);
+const router = new AIRouter(registry, skills);
 
 // Select platform
 let platform: Platform;
@@ -40,6 +60,18 @@ if (config.platform === "telegram") {
   platform = new GroupMePlatform();
 } else {
   platform = new ConsolePlatform();
+}
+
+// Start OAuth — mount on platform server if supported, otherwise standalone
+if (googleOAuthConfigured) {
+  if (platform.setOAuthHandler) {
+    const { createOAuthHandler } = await import("./auth/server.js");
+    platform.setOAuthHandler(createOAuthHandler());
+    logger.info("OAuth routes mounted on platform server");
+  } else {
+    const { startOAuthServer } = await import("./auth/server.js");
+    startOAuthServer();
+  }
 }
 
 logger.info({ platform: config.platform }, "Starting bowdy-bot");
