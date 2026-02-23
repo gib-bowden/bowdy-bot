@@ -16,6 +16,16 @@ const registry = new ModuleRegistry();
 const googleOAuthConfigured = !!(config.googleClientId && config.googleClientSecret);
 
 if (googleOAuthConfigured) {
+  const key = config.googleTokenEncryptionKey;
+  if (!key || !/^[0-9a-f]{64}$/i.test(key)) {
+    throw new Error(
+      "GOOGLE_TOKEN_ENCRYPTION_KEY is required when Google OAuth is configured. " +
+        "Generate one with: openssl rand -hex 32",
+    );
+  }
+}
+
+if (googleOAuthConfigured) {
   const { googleTasksModule } = await import("./modules/google-tasks/index.js");
   registry.register(googleTasksModule);
   logger.info("Using Google Tasks backend (OAuth)");

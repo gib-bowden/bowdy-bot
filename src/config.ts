@@ -35,4 +35,5 @@ export const config = {
   googleOAuthRedirectUri: optional("GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:3001/oauth/callback"),
   googleOAuthPort: optional("GOOGLE_OAUTH_PORT", "3001"),
   googleCalendarId: process.env["GOOGLE_CALENDAR_ID"] ?? "",
+  googleTokenEncryptionKey: process.env["GOOGLE_TOKEN_ENCRYPTION_KEY"] ?? "",
 } as const;

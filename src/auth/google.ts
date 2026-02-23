@@ -6,6 +6,7 @@ import { config } from "../config.js";
 import { getDb } from "../db/client.js";
 import { googleAccounts } from "../db/schema.js";
 import { logger } from "../logger.js";
+import { encrypt, decrypt } from "./crypto.js";
 
 const SCOPES = [
   "https://www.googleapis.com/auth/tasks",
@@ -46,14 +47,14 @@ export async function getAuthClient(email?: string): Promise<OAuth2Client> {
 
   const client = createOAuth2Client();
   client.setCredentials({
-    refresh_token: account.refreshToken,
-    access_token: account.accessToken ?? undefined,
+    refresh_token: decrypt(account.refreshToken),
+    access_token: account.accessToken ? decrypt(account.accessToken) : undefined,
     expiry_date: account.tokenExpiry ? new Date(account.tokenExpiry).getTime() : undefined,
   });
 
   client.on("tokens", (tokens) => {
     const updates: Record<string, string> = { updatedAt: new Date().toISOString() };
-    if (tokens.access_token) updates.accessToken = tokens.access_token;
+    if (tokens.access_token) updates.accessToken = encrypt(tokens.access_token);
     if (tokens.expiry_date) updates.tokenExpiry = new Date(tokens.expiry_date).toISOString();
 
     db.update(googleAccounts)
@@ -96,8 +97,8 @@ export async function handleAuthCallback(code: string): Promise<{ email: string;
     db.update(googleAccounts)
       .set({
         name,
-        refreshToken: tokens.refresh_token ?? existing.refreshToken,
-        accessToken: tokens.access_token ?? null,
+        refreshToken: tokens.refresh_token ? encrypt(tokens.refresh_token) : existing.refreshToken,
+        accessToken: tokens.access_token ? encrypt(tokens.access_token) : null,
         tokenExpiry: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
         scopes: tokens.scope ?? existing.scopes,
         updatedAt: new Date().toISOString(),
@@ -115,8 +116,8 @@ export async function handleAuthCallback(code: string): Promise<{ email: string;
         id: ulid(),
         email,
         name,
-        refreshToken: tokens.refresh_token,
-        accessToken: tokens.access_token ?? null,
+        refreshToken: encrypt(tokens.refresh_token),
+        accessToken: tokens.access_token ? encrypt(tokens.access_token) : null,
         tokenExpiry: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
         scopes: tokens.scope ?? SCOPES.join(" "),
         isDefault: isFirstAccount,
