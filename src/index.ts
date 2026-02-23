@@ -37,12 +37,6 @@ if (googleOAuthConfigured && config.googleCalendarId) {
   registry.register(calendarModule);
 }
 
-// Start OAuth server if Google OAuth is configured
-if (googleOAuthConfigured) {
-  const { startOAuthServer } = await import("./auth/server.js");
-  startOAuthServer();
-}
-
 // Create AI router
 const router = new AIRouter(registry);
 
@@ -59,6 +53,18 @@ if (config.platform === "telegram") {
   platform = new GroupMePlatform();
 } else {
   platform = new ConsolePlatform();
+}
+
+// Start OAuth — mount on platform server if supported, otherwise standalone
+if (googleOAuthConfigured) {
+  if (platform.setOAuthHandler) {
+    const { createOAuthHandler } = await import("./auth/server.js");
+    platform.setOAuthHandler(createOAuthHandler());
+    logger.info("OAuth routes mounted on platform server");
+  } else {
+    const { startOAuthServer } = await import("./auth/server.js");
+    startOAuthServer();
+  }
 }
 
 logger.info({ platform: config.platform }, "Starting bowdy-bot");

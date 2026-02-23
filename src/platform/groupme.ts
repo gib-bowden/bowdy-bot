@@ -5,6 +5,7 @@ import {
 } from "node:http";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+import type { RequestHandler } from "../auth/server.js";
 import type { IncomingMessage, Platform, MessageHandler } from "./types.js";
 
 const MAX_MESSAGE_LENGTH = 1000;
@@ -82,6 +83,7 @@ export class GroupMePlatform implements Platform {
   private server: ReturnType<typeof createServer> | null = null;
   private botId: string;
   private port: number;
+  private oauthHandler: RequestHandler | null = null;
 
   constructor() {
     if (!config.groupmeBotId) {
@@ -90,6 +92,10 @@ export class GroupMePlatform implements Platform {
 
     this.botId = config.groupmeBotId;
     this.port = parseInt(process.env["PORT"] || config.groupmeWebhookPort, 10);
+  }
+
+  setOAuthHandler(handler: RequestHandler): void {
+    this.oauthHandler = handler;
   }
 
   async start(handler: MessageHandler): Promise<void> {
@@ -149,7 +155,11 @@ export class GroupMePlatform implements Platform {
       processing = false;
     };
 
-    this.server = createServer((req: HttpRequest, res: ServerResponse) => {
+    this.server = createServer(async (req: HttpRequest, res: ServerResponse) => {
+      if (this.oauthHandler && await this.oauthHandler(req, res)) {
+        return;
+      }
+
       if (req.method !== "POST") {
         res.writeHead(405);
         res.end();

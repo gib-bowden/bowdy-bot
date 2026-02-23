@@ -297,7 +297,7 @@ All configuration is via environment variables (`.env` file):
    - Add `https://your-app.up.railway.app/oauth/callback` as an **Authorized redirect URI**
 8. Visit `https://your-app.up.railway.app/` to connect your Google account
 
-Railway automatically assigns a `PORT` env var which the Twilio adapter uses. The OAuth server runs on a separate port (`GOOGLE_OAUTH_PORT`, default 3001) — you may need to connect your Google account locally before deploying, or configure Railway to expose both ports.
+Railway automatically assigns a `PORT` env var. When using Twilio or GroupMe, the OAuth routes are served on the same port as the webhook — no extra port configuration needed.
 
 ## API Costs
 

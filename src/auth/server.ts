@@ -1,4 +1,8 @@
-import { createServer, IncomingMessage } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import { URL } from "node:url";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
@@ -9,6 +13,11 @@ import {
   removeAccount,
   setDefaultAccount,
 } from "./google.js";
+
+export type RequestHandler = (
+  req: IncomingMessage,
+  res: ServerResponse,
+) => Promise<boolean>;
 
 function esc(s: string): string {
   return s
@@ -69,30 +78,30 @@ function parseFormBody(req: IncomingMessage): Promise<URLSearchParams> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => resolve(new URLSearchParams(Buffer.concat(chunks).toString())));
+    req.on("end", () =>
+      resolve(new URLSearchParams(Buffer.concat(chunks).toString())),
+    );
     req.on("error", reject);
   });
 }
 
-export function startOAuthServer(): void {
-  const port = parseInt(config.googleOAuthPort, 10);
-
-  const server = createServer(async (req, res) => {
-    const url = new URL(req.url!, `http://localhost:${port}`);
+export function createOAuthHandler(): RequestHandler {
+  return async (req, res) => {
+    const url = new URL(req.url!, `http://${req.headers.host ?? "localhost"}`);
 
     try {
       if (url.pathname === "/" && req.method === "GET") {
         const msg = url.searchParams.get("msg") ?? undefined;
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(accountsPage(msg));
-        return;
+        return true;
       }
 
       if (url.pathname === "/oauth/start" && req.method === "GET") {
         const consentUrl = getConsentUrl();
         res.writeHead(302, { Location: consentUrl });
         res.end();
-        return;
+        return true;
       }
 
       if (url.pathname === "/oauth/callback" && req.method === "GET") {
@@ -101,20 +110,24 @@ export function startOAuthServer(): void {
 
         if (error) {
           res.writeHead(200, { "Content-Type": "text/html" });
-          res.end(accountsPage(undefined, `Google authorization failed: ${error}`));
-          return;
+          res.end(
+            accountsPage(undefined, `Google authorization failed: ${error}`),
+          );
+          return true;
         }
 
         if (!code) {
           res.writeHead(400, { "Content-Type": "text/html" });
           res.end(accountsPage(undefined, "Missing authorization code"));
-          return;
+          return true;
         }
 
         const { email, name } = await handleAuthCallback(code);
-        res.writeHead(302, { Location: `/?msg=${encodeURIComponent(`Connected ${name} (${email})`)}` });
+        res.writeHead(302, {
+          Location: `/?msg=${encodeURIComponent(`Connected ${name} (${email})`)}`,
+        });
         res.end();
-        return;
+        return true;
       }
 
       if (url.pathname === "/oauth/remove" && req.method === "POST") {
@@ -122,12 +135,14 @@ export function startOAuthServer(): void {
         const email = form.get("email");
         if (email) {
           removeAccount(email);
-          res.writeHead(303, { Location: `/?msg=${encodeURIComponent(`Removed ${email}`)}` });
+          res.writeHead(303, {
+            Location: `/?msg=${encodeURIComponent(`Removed ${email}`)}`,
+          });
         } else {
           res.writeHead(303, { Location: "/" });
         }
         res.end();
-        return;
+        return true;
       }
 
       if (url.pathname === "/oauth/default" && req.method === "POST") {
@@ -135,20 +150,37 @@ export function startOAuthServer(): void {
         const email = form.get("email");
         if (email) {
           setDefaultAccount(email);
-          res.writeHead(303, { Location: `/?msg=${encodeURIComponent(`${email} set as default`)}` });
+          res.writeHead(303, {
+            Location: `/?msg=${encodeURIComponent(`${email} set as default`)}`,
+          });
         } else {
           res.writeHead(303, { Location: "/" });
         }
         res.end();
-        return;
+        return true;
       }
-
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end("Not found");
     } catch (err) {
       logger.error({ err }, "OAuth server error");
       res.writeHead(500, { "Content-Type": "text/html" });
-      res.end(accountsPage(undefined, `Server error: ${(err as Error).message}`));
+      res.end(
+        accountsPage(undefined, `Server error: ${(err as Error).message}`),
+      );
+      return true;
+    }
+
+    return false;
+  };
+}
+
+export function startOAuthServer(): void {
+  const port = parseInt(config.googleOAuthPort, 10);
+  const handler = createOAuthHandler();
+
+  const server = createServer(async (req, res) => {
+    const handled = await handler(req, res);
+    if (!handled) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
     }
   });
 
