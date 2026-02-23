@@ -36,7 +36,7 @@ You are currently talking to ${username}.${formatting ? "\n" + formatting : ""}$
 }
 
 const MODEL = "claude-sonnet-4-6";
-const BETAS: Anthropic.Beta.AnthropicBeta[] = [
+const SKILL_BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "skills-2025-10-02",
   "code-execution-2025-08-25",
 ];
@@ -142,7 +142,7 @@ export class AIRouter {
         system,
         tools: betaTools,
         messages,
-        betas: BETAS,
+        ...(this.skills.length > 0 ? { betas: SKILL_BETAS } : {}),
         ...(containerParam ? { container: containerParam } : {}),
       });
 

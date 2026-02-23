@@ -57,6 +57,11 @@ function pickBestMatch(
   const exact = matches.filter((m) => m.title.toLowerCase() === query.toLowerCase());
   if (exact.length === 1) return { type: "found", match: exact[0]! };
 
+  // If all exact matches are in the same list, they're duplicates — just pick the first one
+  if (exact.length > 1 && exact.every((m) => m.listId === exact[0]!.listId)) {
+    return { type: "found", match: exact[0]! };
+  }
+
   return { type: "ambiguous", matches: exact.length > 1 ? exact : matches };
 }
 
@@ -149,7 +154,7 @@ const tools: Anthropic.Tool[] = [
   {
     name: "delete_task",
     description:
-      "Permanently delete a task by its title (partial match supported). Use this when a task was added to the wrong list, is a duplicate, or should be fully removed rather than completed.",
+      "Permanently delete a task by its title (partial match supported). This is destructive — first call without confirm to preview what will be deleted, then call again with confirm=true after the user agrees.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -157,8 +162,33 @@ const tools: Anthropic.Tool[] = [
           type: "string",
           description: "The task title (or partial match) to delete",
         },
+        confirm: {
+          type: "boolean",
+          description: "Set to true to confirm deletion. Omit or set false to preview what will be deleted.",
+          default: false,
+        },
       },
       required: ["title"],
+    },
+  },
+  {
+    name: "delete_list",
+    description:
+      "Permanently delete an entire task list and all its tasks. This is destructive — first call without confirm to see what will be deleted, then call again with confirm=true after the user agrees.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        list: {
+          type: "string",
+          description: "The name of the list to delete (e.g. 'grocery', 'general')",
+        },
+        confirm: {
+          type: "boolean",
+          description: "Set to true to confirm deletion. Omit or set false to preview what will be deleted.",
+          default: false,
+        },
+      },
+      required: ["list"],
     },
   },
 ];
@@ -277,9 +307,19 @@ async function completeTask(input: Record<string, unknown>): Promise<unknown> {
   return { success: true, title: match.title, list: match.listName };
 }
 
+function confirmationPrompt(description: string, details: Record<string, unknown>): unknown {
+  return {
+    success: false,
+    needs_confirmation: true,
+    ...details,
+    message: `${description} Call again with confirm=true to proceed.`,
+  };
+}
+
 async function deleteTask(input: Record<string, unknown>): Promise<unknown> {
   const client = await getTasksClient();
   const title = input["title"] as string;
+  const confirm = (input["confirm"] as boolean) ?? false;
   const matches = await findTasksAcrossLists(title, { includeCompleted: true });
   const result = pickBestMatch(matches, title);
 
@@ -294,12 +334,56 @@ async function deleteTask(input: Record<string, unknown>): Promise<unknown> {
   }
 
   const { match } = result;
+
+  if (!confirm) {
+    return confirmationPrompt(
+      `Found "${match.title}" in ${match.listName}.`,
+      { title: match.title, list: match.listName },
+    );
+  }
+
   await client.tasks.delete({
     tasklist: match.listId,
     task: match.taskId,
   });
 
   return { success: true, title: match.title, list: match.listName };
+}
+
+async function deleteList(input: Record<string, unknown>): Promise<unknown> {
+  const client = await getTasksClient();
+  const name = (input["list"] as string).toLowerCase();
+  const confirm = (input["confirm"] as boolean) ?? false;
+
+  // Populate cache
+  const listsResponse = await client.tasklists.list({ maxResults: 100 });
+  for (const list of listsResponse.data.items || []) {
+    if (list.id && list.title) {
+      taskListCache.set(list.title.toLowerCase(), list.id);
+    }
+  }
+
+  const listId = taskListCache.get(name);
+  if (!listId) {
+    const available = [...taskListCache.keys()].join(", ");
+    return { success: false, error: `No list named "${name}" found. Available lists: ${available}` };
+  }
+
+  // Count tasks in the list
+  const tasksResponse = await client.tasks.list({ tasklist: listId, maxResults: 100 });
+  const taskCount = (tasksResponse.data.items || []).filter((t) => t.title).length;
+
+  if (!confirm) {
+    return confirmationPrompt(
+      `List "${name}" has ${taskCount} task(s).`,
+      { list: name, task_count: taskCount },
+    );
+  }
+
+  await client.tasklists.delete({ tasklist: listId });
+  taskListCache.delete(name);
+
+  return { success: true, list: name, deleted_tasks: taskCount };
 }
 
 export const googleTasksModule: Module = {
@@ -316,6 +400,8 @@ export const googleTasksModule: Module = {
         return completeTask(input);
       case "delete_task":
         return deleteTask(input);
+      case "delete_list":
+        return deleteList(input);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }

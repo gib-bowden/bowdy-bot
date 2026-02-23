@@ -1,5 +1,5 @@
 ---
-name: calendar-management
+name: calendar
 description: Patterns for managing Google Calendar events — conflict checking, timezone handling, natural date interpretation, and event conventions
 ---
 

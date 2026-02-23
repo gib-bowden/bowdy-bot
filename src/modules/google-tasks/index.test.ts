@@ -4,6 +4,7 @@ const mockDelete = vi.fn();
 const mockPatch = vi.fn();
 const mockList = vi.fn();
 const mockTasklistsList = vi.fn();
+const mockTasklistsDelete = vi.fn();
 
 vi.mock("./client.js", () => ({
   getTasksClient: vi.fn(async () => ({
@@ -14,6 +15,7 @@ vi.mock("./client.js", () => ({
     },
     tasklists: {
       list: mockTasklistsList,
+      delete: mockTasklistsDelete,
     },
   })),
 }));
@@ -31,7 +33,32 @@ beforeEach(() => {
 });
 
 describe("googleTasksModule.executeTool - delete_task", () => {
-  it("deletes a task by partial match", async () => {
+  it("returns confirmation prompt without confirm flag", async () => {
+    mockList.mockResolvedValueOnce({
+      data: { items: [] },
+    });
+    mockList.mockResolvedValueOnce({
+      data: {
+        items: [
+          { id: "task-1", title: "Buy milk" },
+          { id: "task-2", title: "Buy eggs" },
+        ],
+      },
+    });
+
+    const result = await googleTasksModule.executeTool("delete_task", { title: "milk" });
+
+    expect(result).toEqual({
+      success: false,
+      needs_confirmation: true,
+      title: "Buy milk",
+      list: "grocery",
+      message: expect.stringContaining("Call again with confirm=true"),
+    });
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it("deletes a task by partial match when confirmed", async () => {
     mockList.mockResolvedValueOnce({
       data: { items: [] },
     });
@@ -45,7 +72,7 @@ describe("googleTasksModule.executeTool - delete_task", () => {
     });
     mockDelete.mockResolvedValue({});
 
-    const result = await googleTasksModule.executeTool("delete_task", { title: "milk" });
+    const result = await googleTasksModule.executeTool("delete_task", { title: "milk", confirm: true });
 
     expect(result).toEqual({ success: true, title: "Buy milk", list: "grocery" });
     expect(mockDelete).toHaveBeenCalledWith({ tasklist: "list-2", task: "task-1" });
@@ -58,7 +85,7 @@ describe("googleTasksModule.executeTool - delete_task", () => {
     mockList.mockResolvedValueOnce({ data: { items: [] } });
     mockDelete.mockResolvedValue({});
 
-    const result = await googleTasksModule.executeTool("delete_task", { title: "CALL PLUMBER" });
+    const result = await googleTasksModule.executeTool("delete_task", { title: "CALL PLUMBER", confirm: true });
 
     expect(result).toEqual({ success: true, title: "Call plumber", list: "general" });
   });
@@ -79,7 +106,7 @@ describe("googleTasksModule.executeTool - delete_task", () => {
     mockList.mockResolvedValueOnce({ data: { items: [] } });
     mockDelete.mockResolvedValue({});
 
-    const result = await googleTasksModule.executeTool("delete_task", { title: "Old task" });
+    const result = await googleTasksModule.executeTool("delete_task", { title: "Old task", confirm: true });
 
     expect(result).toEqual({ success: true, title: "Old task", list: "general" });
     expect(mockList).toHaveBeenCalledWith(
@@ -116,7 +143,7 @@ describe("googleTasksModule.executeTool - delete_task", () => {
     mockList.mockResolvedValueOnce({ data: { items: [] } });
     mockDelete.mockResolvedValue({});
 
-    const result = await googleTasksModule.executeTool("delete_task", { title: "milk" });
+    const result = await googleTasksModule.executeTool("delete_task", { title: "milk", confirm: true });
 
     expect(result).toEqual({ success: true, title: "milk", list: "general" });
     expect(mockDelete).toHaveBeenCalledWith({ tasklist: "list-1", task: "task-1" });
@@ -156,5 +183,65 @@ describe("googleTasksModule.executeTool - complete_task", () => {
       error: expect.stringContaining("Multiple tasks match"),
     });
     expect(mockPatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("googleTasksModule.executeTool - delete_list", () => {
+  it("returns confirmation prompt when confirm is not set", async () => {
+    mockList.mockResolvedValueOnce({
+      data: { items: [{ title: "Buy milk" }, { title: "Buy eggs" }] },
+    });
+
+    const result = await googleTasksModule.executeTool("delete_list", { list: "grocery" });
+
+    expect(result).toEqual({
+      success: false,
+      needs_confirmation: true,
+      list: "grocery",
+      task_count: 2,
+      message: expect.stringContaining("Call again with confirm=true"),
+    });
+    expect(mockTasklistsDelete).not.toHaveBeenCalled();
+  });
+
+  it("returns confirmation prompt when confirm is false", async () => {
+    mockList.mockResolvedValueOnce({
+      data: { items: [{ title: "Task 1" }] },
+    });
+
+    const result = await googleTasksModule.executeTool("delete_list", { list: "general", confirm: false });
+
+    expect(result).toEqual(expect.objectContaining({ needs_confirmation: true }));
+    expect(mockTasklistsDelete).not.toHaveBeenCalled();
+  });
+
+  it("deletes the list when confirm is true", async () => {
+    mockList.mockResolvedValueOnce({
+      data: { items: [{ title: "Buy milk" }] },
+    });
+    mockTasklistsDelete.mockResolvedValue({});
+
+    const result = await googleTasksModule.executeTool("delete_list", { list: "grocery", confirm: true });
+
+    expect(result).toEqual({ success: true, list: "grocery", deleted_tasks: 1 });
+    expect(mockTasklistsDelete).toHaveBeenCalledWith({ tasklist: "list-2" });
+  });
+
+  it("returns error when list not found", async () => {
+    const result = await googleTasksModule.executeTool("delete_list", { list: "nonexistent" });
+
+    expect(result).toEqual({
+      success: false,
+      error: expect.stringContaining('No list named "nonexistent" found'),
+    });
+    expect(mockTasklistsDelete).not.toHaveBeenCalled();
+  });
+
+  it("reports correct count for empty lists", async () => {
+    mockList.mockResolvedValueOnce({ data: { items: [] } });
+
+    const result = await googleTasksModule.executeTool("delete_list", { list: "grocery" });
+
+    expect(result).toEqual(expect.objectContaining({ task_count: 0 }));
   });
 });
