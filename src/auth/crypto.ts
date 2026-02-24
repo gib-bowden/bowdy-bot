@@ -5,7 +5,7 @@ const ALGORITHM = "aes-256-gcm";
 const NONCE_LENGTH = 12;
 
 function getKey(): Buffer {
-  return Buffer.from(config.googleTokenEncryptionKey, "hex");
+  return Buffer.from(config.tokenEncryptionKey, "hex");
 }
 
 export function encrypt(plaintext: string): string {
