@@ -117,6 +117,9 @@ export async function syncSkills(): Promise<BetaSkillParams[]> {
     // Delete existing skill first — versions.create strips filenames which
     // breaks the required folder structure, so we always recreate instead.
     if (existing) {
+      for await (const ver of client.beta.skills.versions.list(existing.id, { betas: BETAS })) {
+        await client.beta.skills.versions.delete(ver.version, { skill_id: existing.id, betas: BETAS });
+      }
       await client.beta.skills.delete(existing.id, { betas: BETAS });
       logger.debug({ skill: local.name }, "Deleted existing skill for re-creation");
     }
