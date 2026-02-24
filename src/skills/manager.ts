@@ -110,36 +110,28 @@ export async function syncSkills(): Promise<BetaSkillParams[]> {
 
     const existing = remoteSkills.find((r) => r.display_title === displayTitle);
 
-    const file = new File([new TextEncoder().encode(local.content)], "SKILL.md", {
+    const file = new File([new TextEncoder().encode(local.content)], `${local.dirName}/SKILL.md`, {
       type: "text/markdown",
     });
 
+    // Delete existing skill first — versions.create strips filenames which
+    // breaks the required folder structure, so we always recreate instead.
     if (existing) {
-      const version = await client.beta.skills.versions.create(existing.id, {
-        files: [file],
-        betas: BETAS,
-      });
-      const versionStr = String(version.version);
-      logger.info({ skill: local.name, version: versionStr }, "Updated skill version");
-      skillParams.push({
-        skill_id: existing.id,
-        type: "custom",
-        version: versionStr,
-      });
-      cache[local.name] = { hash: contentHash, skillId: existing.id, version: versionStr };
-    } else {
-      const skill = await client.beta.skills.create({
-        display_title: displayTitle,
-        files: [file],
-        betas: BETAS,
-      });
-      logger.info({ skill: local.name, id: skill.id }, "Created new skill");
-      skillParams.push({
-        skill_id: skill.id,
-        type: "custom",
-      });
-      cache[local.name] = { hash: contentHash, skillId: skill.id };
+      await client.beta.skills.delete(existing.id, { betas: BETAS });
+      logger.debug({ skill: local.name }, "Deleted existing skill for re-creation");
     }
+
+    const skill = await client.beta.skills.create({
+      display_title: displayTitle,
+      files: [file],
+      betas: BETAS,
+    });
+    logger.info({ skill: local.name, id: skill.id }, existing ? "Recreated skill" : "Created new skill");
+    skillParams.push({
+      skill_id: skill.id,
+      type: "custom",
+    });
+    cache[local.name] = { hash: contentHash, skillId: skill.id };
     cacheChanged = true;
   }
 
