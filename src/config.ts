@@ -36,4 +36,8 @@ export const config = {
   googleOAuthPort: optional("GOOGLE_OAUTH_PORT", "3001"),
   googleCalendarId: process.env["GOOGLE_CALENDAR_ID"] ?? "",
   googleTokenEncryptionKey: process.env["GOOGLE_TOKEN_ENCRYPTION_KEY"] ?? "",
+  tokenEncryptionKey: process.env["TOKEN_ENCRYPTION_KEY"] ?? process.env["GOOGLE_TOKEN_ENCRYPTION_KEY"] ?? "",
+  krogerClientId: process.env["KROGER_CLIENT_ID"] ?? "",
+  krogerClientSecret: process.env["KROGER_CLIENT_SECRET"] ?? "",
+  krogerOAuthRedirectUri: optional("KROGER_OAUTH_REDIRECT_URI", "http://localhost:3001/kroger/callback"),
 } as const;

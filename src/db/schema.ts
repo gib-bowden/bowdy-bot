@@ -32,6 +32,21 @@ export const googleAccounts = sqliteTable("google_accounts", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
+export const krogerAccounts = sqliteTable("kroger_accounts", {
+  id: text("id").primaryKey(), // ULID
+  krogerUserId: text("kroger_user_id").notNull().unique(),
+  accessToken: text("access_token").notNull(), // encrypted
+  refreshToken: text("refresh_token").notNull(), // encrypted
+  tokenExpiry: text("token_expiry"), // ISO datetime
+  scopes: text("scopes").notNull(),
+  storeId: text("store_id"),
+  storeName: text("store_name"),
+  storeAddress: text("store_address"),
+  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
 export const conversationHistory = sqliteTable("conversation_history", {
   id: text("id").primaryKey(), // ULID
   userId: text("user_id").notNull(),

@@ -46,6 +46,21 @@ export function ensureSchema(): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS kroger_accounts (
+      id TEXT PRIMARY KEY,
+      kroger_user_id TEXT NOT NULL UNIQUE,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT NOT NULL,
+      token_expiry TEXT,
+      scopes TEXT NOT NULL,
+      store_id TEXT,
+      store_name TEXT,
+      store_address TEXT,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     DROP TABLE IF EXISTS conversation_history;
     CREATE TABLE conversation_history (
       id TEXT PRIMARY KEY,

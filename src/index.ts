@@ -14,12 +14,13 @@ ensureSchema();
 // Register modules
 const registry = new ModuleRegistry();
 const googleOAuthConfigured = !!(config.googleClientId && config.googleClientSecret);
+const krogerConfigured = !!(config.krogerClientId && config.krogerClientSecret);
 
-if (googleOAuthConfigured) {
-  const key = config.googleTokenEncryptionKey;
+if (googleOAuthConfigured || krogerConfigured) {
+  const key = config.tokenEncryptionKey;
   if (!key || !/^[0-9a-f]{64}$/i.test(key)) {
     throw new Error(
-      "GOOGLE_TOKEN_ENCRYPTION_KEY is required when Google OAuth is configured. " +
+      "TOKEN_ENCRYPTION_KEY (or GOOGLE_TOKEN_ENCRYPTION_KEY) is required when Google OAuth or Kroger is configured. " +
         "Generate one with: openssl rand -hex 32",
     );
   }
@@ -29,6 +30,11 @@ if (googleOAuthConfigured) {
   const { googleTasksModule } = await import("./modules/google-tasks/index.js");
   registry.register(googleTasksModule);
   logger.info("Using Google Tasks backend (OAuth)");
+}
+if (krogerConfigured) {
+  const { krogerModule } = await import("./modules/kroger/index.js");
+  registry.register(krogerModule);
+  logger.info("Using Kroger product search + cart integration");
 }
 
 if (googleOAuthConfigured && config.googleCalendarId) {
@@ -63,14 +69,19 @@ if (config.platform === "telegram") {
 }
 
 // Start OAuth — mount on platform server if supported, otherwise standalone
-if (googleOAuthConfigured) {
+if (googleOAuthConfigured || krogerConfigured) {
+  const { createOAuthHandler, createKrogerOAuthHandler, createCombinedHandler, startOAuthServer } = await import("./auth/server.js");
+
+  const handlers = [];
+  if (googleOAuthConfigured) handlers.push(createOAuthHandler());
+  if (krogerConfigured) handlers.push(createKrogerOAuthHandler());
+  const combinedHandler = createCombinedHandler(handlers);
+
   if (platform.setOAuthHandler) {
-    const { createOAuthHandler } = await import("./auth/server.js");
-    platform.setOAuthHandler(createOAuthHandler());
+    platform.setOAuthHandler(combinedHandler);
     logger.info("OAuth routes mounted on platform server");
   } else {
-    const { startOAuthServer } = await import("./auth/server.js");
-    startOAuthServer();
+    startOAuthServer(combinedHandler);
   }
 }
 

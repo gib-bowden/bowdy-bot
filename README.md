@@ -159,17 +159,19 @@ When implemented, it will follow the same adapter pattern as Telegram — a new 
 
 ### Tasks & Groceries
 
-Manage to-do lists and grocery lists with natural language:
+Manage to-do lists and grocery lists with natural language. The grocery list lives in **Google Tasks** (visible in the Google Tasks app), with optional **Kroger integration** for product search and cart sync.
 
-| What you can say               | What happens                      |
-| ------------------------------ | --------------------------------- |
-| "Add eggs to the grocery list" | Adds "eggs" to the grocery list   |
-| "I need to call the vet"       | Adds to the general task list     |
-| "What's on my grocery list?"   | Shows all open grocery items      |
-| "Show me all my tasks"         | Shows everything across all lists |
-| "Mark eggs as done"            | Completes the matching item       |
+| What you can say               | What happens                                       |
+| ------------------------------ | -------------------------------------------------- |
+| "Add eggs to the grocery list" | Adds "eggs" to the grocery list (Google Tasks)     |
+| "I need to call the vet"       | Adds to the general task list                      |
+| "What's on my grocery list?"   | Shows all open grocery items                       |
+| "Show me all my tasks"         | Shows everything across all lists                  |
+| "Mark eggs as done"            | Completes the matching item                        |
+| "Search Kroger for chicken"    | Searches products at your preferred Kroger store   |
+| "Send groceries to Kroger"     | Pushes grocery list items to your Kroger cart       |
 
-Tasks are stored in a local SQLite database at `data/bowdy-bot.db`.
+When Google OAuth is configured, tasks and groceries are managed via Google Tasks. When Kroger is also configured, you get product search and cart sync on top — the two work together.
 
 ### Calendar & Google Tasks
 
@@ -237,6 +239,24 @@ GOOGLE_TOKEN_ENCRYPTION_KEY=your-64-char-hex-key
 
 The calendar and tasks modules only load when Google OAuth is configured. If the vars are missing, the bot runs fine without these features. OAuth tokens are encrypted at rest using AES-256-GCM.
 
+### Kroger Integration
+
+Optional product search and cart sync. The grocery list stays in Google Tasks — Kroger adds the ability to search for products at your local store and push your grocery list to the Kroger app cart when you're ready to shop.
+
+#### Setup
+
+1. Create an app at [developer.kroger.com](https://developer.kroger.com)
+2. Add `http://localhost:3001/kroger/callback` as an authorized redirect URI
+3. Add to your `.env`:
+   ```
+   KROGER_CLIENT_ID=your-kroger-client-id
+   KROGER_CLIENT_SECRET=your-kroger-client-secret
+   ```
+4. Start the bot and visit `http://localhost:3001/kroger/start` to connect your Kroger account
+5. Tell the bot your zip code to set your preferred store ("Set my Kroger store to 37201")
+
+The Kroger module only loads when `KROGER_CLIENT_ID` and `KROGER_CLIENT_SECRET` are set. It registers alongside Google Tasks — not as a replacement.
+
 ### General Chat
 
 Anything that isn't a task or calendar request gets a normal conversational response from Claude. Ask questions, get recommendations, brainstorm — whatever you need.
@@ -264,7 +284,10 @@ All configuration is via environment variables (`.env` file):
 | `GOOGLE_OAUTH_REDIRECT_URI`      | No          | `http://localhost:3001/oauth/callback` | OAuth callback URL                              |
 | `GOOGLE_OAUTH_PORT`              | No          | `3001`                | Port for the OAuth callback server                             |
 | `GOOGLE_CALENDAR_ID`              | No          | —                     | Google Calendar ID (e.g. Gmail address)                        |
-| `GOOGLE_TOKEN_ENCRYPTION_KEY`     | If Google OAuth | —                 | 32-byte hex key for token encryption (`openssl rand -hex 32`)  |
+| `TOKEN_ENCRYPTION_KEY`            | If Google/Kroger OAuth | —            | 32-byte hex key for token encryption (`openssl rand -hex 32`)  |
+| `KROGER_CLIENT_ID`                | No          | —                     | Kroger API client ID (from developer.kroger.com)               |
+| `KROGER_CLIENT_SECRET`            | No          | —                     | Kroger API client secret                                       |
+| `KROGER_OAUTH_REDIRECT_URI`      | No          | `http://localhost:3001/kroger/callback` | Kroger OAuth callback URL                     |
 
 ## Deploying to Railway
 
@@ -288,6 +311,10 @@ All configuration is via environment variables (`.env` file):
    GOOGLE_CALENDAR_ID=family@gmail.com
    GOOGLE_TOKEN_ENCRYPTION_KEY=your-64-char-hex-key
    GOOGLE_OAUTH_REDIRECT_URI=https://your-app.up.railway.app/oauth/callback
+   # Optional: Kroger integration
+   KROGER_CLIENT_ID=your-kroger-client-id
+   KROGER_CLIENT_SECRET=your-kroger-client-secret
+   KROGER_OAUTH_REDIRECT_URI=https://your-app.up.railway.app/kroger/callback
    ```
 5. Deploy — Railway builds the Docker image and starts the container
 6. Copy the Railway public URL and set it as the Twilio webhook URL (POST) for your phone number
@@ -344,9 +371,9 @@ Chat Platform (Console / Telegram / Twilio SMS / GroupMe / WhatsApp)
        ↓ normalized IncomingMessage
 AI Router (Claude with tool_use)
        ↓ tool calls
-Module System (Tasks, Calendar, Chat)
-       ↓
-SQLite via Drizzle ORM
+Module System (Tasks, Calendar, Kroger, Chat)
+       ↓                          ↓
+SQLite via Drizzle ORM    External APIs (Google, Kroger)
 ```
 
 Claude IS the router. Modules register tools with descriptions, and Claude decides which to call based on the user's message. No hand-rolled intent matching.
@@ -360,6 +387,7 @@ Claude IS the router. Modules register tools with descriptions, and Claude decid
 - [x] GroupMe integration
 - [ ] Conversation history / context window
 - [x] Google Calendar integration
+- [x] Kroger product search + cart sync
 - [ ] WhatsApp adapter
 - [ ] Recurring tasks
 - [ ] Family communication topics
