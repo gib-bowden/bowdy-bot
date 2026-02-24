@@ -6,7 +6,7 @@ import type { BetaSkillParams } from "@anthropic-ai/sdk/resources/beta/messages/
 import { getClient } from "../ai/client.js";
 import { logger } from "../logger.js";
 
-const SKILLS_DIR = resolve(import.meta.dirname, "../../skills");
+const SKILLS_DIR = resolve(process.cwd(), "skills");
 const CACHE_PATH = resolve(SKILLS_DIR, ".skills-cache.json");
 const DISPLAY_PREFIX = "bowdy-bot/";
 const BETAS: Anthropic.Beta.AnthropicBeta[] = ["skills-2025-10-02"];
