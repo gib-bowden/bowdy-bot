@@ -110,7 +110,7 @@ export async function syncSkills(): Promise<BetaSkillParams[]> {
 
     const existing = remoteSkills.find((r) => r.display_title === displayTitle);
 
-    const file = new File([new TextEncoder().encode(local.content)], `${local.dirName}/SKILL.md`, {
+    const file = new File([new TextEncoder().encode(local.content)], "SKILL.md", {
       type: "text/markdown",
     });
 
