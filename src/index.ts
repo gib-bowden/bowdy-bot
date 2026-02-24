@@ -26,14 +26,15 @@ if (googleOAuthConfigured || krogerConfigured) {
   }
 }
 
-if (krogerConfigured) {
-  const { krogerModule } = await import("./modules/kroger/index.js");
-  registry.register(krogerModule);
-  logger.info("Using Kroger grocery integration");
-} else if (googleOAuthConfigured) {
+if (googleOAuthConfigured) {
   const { googleTasksModule } = await import("./modules/google-tasks/index.js");
   registry.register(googleTasksModule);
   logger.info("Using Google Tasks backend (OAuth)");
+}
+if (krogerConfigured) {
+  const { krogerModule } = await import("./modules/kroger/index.js");
+  registry.register(krogerModule);
+  logger.info("Using Kroger product search + cart integration");
 }
 
 if (googleOAuthConfigured && config.googleCalendarId) {

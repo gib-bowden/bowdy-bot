@@ -47,21 +47,6 @@ export const krogerAccounts = sqliteTable("kroger_accounts", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
-export const krogerGroceryItems = sqliteTable("kroger_grocery_items", {
-  id: text("id").primaryKey(), // ULID
-  productId: text("product_id"),
-  upc: text("upc"),
-  name: text("name").notNull(),
-  brand: text("brand"),
-  price: text("price"), // stored as string to avoid float issues
-  size: text("size"),
-  quantity: integer("quantity").notNull().default(1),
-  imageUrl: text("image_url"),
-  storeId: text("store_id"),
-  checked: integer("checked", { mode: "boolean" }).notNull().default(false),
-  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
-});
-
 export const conversationHistory = sqliteTable("conversation_history", {
   id: text("id").primaryKey(), // ULID
   userId: text("user_id").notNull(),

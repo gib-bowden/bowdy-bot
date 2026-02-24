@@ -86,6 +86,16 @@ export async function searchProducts(opts: {
   });
 }
 
+export async function addToCart(
+  items: Array<{ upc: string; quantity: number }>,
+): Promise<void> {
+  await krogerApiFetch("/cart/add", {
+    method: "PUT",
+    auth: "user",
+    body: { items: items.map((i) => ({ upc: i.upc, quantity: i.quantity })) },
+  });
+}
+
 export async function searchLocations(opts: {
   zipCode: string;
   radiusMiles?: number;
