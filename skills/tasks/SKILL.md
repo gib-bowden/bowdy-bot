@@ -1,5 +1,5 @@
 ---
-name: task-management
+name: tasks
 description: Patterns for managing tasks and grocery lists — organization, completion workflows, categorization, and cleanup
 ---
 
