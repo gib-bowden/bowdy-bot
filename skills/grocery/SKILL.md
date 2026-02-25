@@ -1,7 +1,7 @@
 ---
 name: Grocery Shopping
 description: Manage the family grocery list (Google Tasks) with Kroger product search and cart sync
-tools:
+allowed-tools:
   - add_task
   - list_tasks
   - complete_task
