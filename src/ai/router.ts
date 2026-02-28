@@ -38,7 +38,6 @@ You are currently talking to ${username}.${formatting ? "\n" + formatting : ""}$
 const MODEL = "claude-sonnet-4-6";
 const SKILL_BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "skills-2025-10-02",
-  "code-execution-2025-08-25",
 ];
 
 export interface StreamCallbacks {
@@ -114,7 +113,7 @@ export class AIRouter {
           : tool,
       ),
       ...(this.skills.length > 0
-        ? [{ type: "code_execution_20250522" as const, name: "code_execution" as const }]
+        ? [{ type: "code_execution_20260120" as const, name: "code_execution" as const }]
         : []),
       webSearchTool,
     ];
