@@ -28,10 +28,23 @@ vi.mock("../google-tasks/client.js", () => ({
   })),
 }));
 
+const mockLookupPreference = vi.fn();
+const mockSavePreference = vi.fn();
+const mockListPreferences = vi.fn();
+const mockDeletePreference = vi.fn();
+
+vi.mock("./preferences.js", () => ({
+  lookupPreference: (...args: unknown[]) => mockLookupPreference(...args),
+  savePreference: (...args: unknown[]) => mockSavePreference(...args),
+  listPreferences: () => mockListPreferences(),
+  deletePreference: (...args: unknown[]) => mockDeletePreference(...args),
+}));
+
 import { krogerModule } from "./index.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockLookupPreference.mockReturnValue(null);
 });
 
 describe("search_kroger_products", () => {
@@ -217,7 +230,7 @@ describe("send_to_kroger_cart", () => {
     );
   });
 
-  it("searches each item, adds to cart, and reports results", async () => {
+  it("returns items without preferences as needs_selection with candidates", async () => {
     mockGetDefaultAccount.mockReturnValue({ storeId: "store-1" });
     mockTasksListTasklists.mockResolvedValue({
       data: { items: [{ id: "list-grocery", title: "grocery" }] },
@@ -232,24 +245,91 @@ describe("send_to_kroger_cart", () => {
     });
 
     mockSearchProducts
-      .mockResolvedValueOnce([{ productId: "p1", upc: "upc-milk", name: "Kroger Whole Milk", brand: "Kroger", price: 3.49, size: "1 gal", imageUrl: null }])
+      .mockResolvedValueOnce([
+        { productId: "p1", upc: "upc-milk", name: "Kroger Whole Milk", brand: "Kroger", price: 3.49, size: "1 gal", imageUrl: null },
+        { productId: "p2", upc: "upc-milk-2", name: "Organic Whole Milk", brand: "Simple Truth", price: 5.99, size: "1 gal", imageUrl: null },
+      ])
       .mockResolvedValueOnce([]); // Dragon Fruit Jam not found
 
+    const result = (await krogerModule.executeTool("send_to_kroger_cart", {})) as Record<string, unknown>;
+
+    expect(result["success"]).toBe(true);
+    expect(result["added_to_cart"]).toEqual([]);
+    expect(result["needs_selection"]).toEqual([
+      {
+        grocery_item: "Whole Milk",
+        candidates: [
+          { product_id: "p1", upc: "upc-milk", name: "Kroger Whole Milk", brand: "Kroger", price: "$3.49", size: "1 gal" },
+          { product_id: "p2", upc: "upc-milk-2", name: "Organic Whole Milk", brand: "Simple Truth", price: "$5.99", size: "1 gal" },
+        ],
+      },
+    ]);
+    expect(result["not_found"]).toEqual(["Dragon Fruit Jam"]);
+
+    // No items should be added to cart — all need user selection
+    expect(mockAddToCart).not.toHaveBeenCalled();
+
+    // Verify search was called with limit 3
+    expect(mockSearchProducts).toHaveBeenCalledWith(
+      expect.objectContaining({ term: "Whole Milk", locationId: "store-1", limit: 3 }),
+    );
+  });
+
+  it("adds preference items to cart and returns others as needs_selection", async () => {
+    mockGetDefaultAccount.mockReturnValue({ storeId: "store-1" });
+    mockTasksListTasklists.mockResolvedValue({
+      data: { items: [{ id: "list-grocery", title: "grocery" }] },
+    });
+    mockTasksListTasks.mockResolvedValue({
+      data: {
+        items: [
+          { title: "Eggs" },
+          { title: "Bread" },
+        ],
+      },
+    });
+
+    mockLookupPreference
+      .mockReturnValueOnce({
+        id: "pref-1",
+        genericName: "eggs",
+        upc: "upc-eggs-pref",
+        productId: "p-eggs",
+        productName: "Kroger Grade A Large Eggs, 12 ct",
+        brand: "Kroger",
+        size: "12 ct",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      })
+      .mockReturnValueOnce(null); // No preference for Bread
+
+    mockSearchProducts.mockResolvedValueOnce([
+      { productId: "p-bread", upc: "upc-bread", name: "Wonder Bread", brand: "Wonder", price: 2.99, size: "20 oz", imageUrl: null },
+    ]);
     mockAddToCart.mockResolvedValue(undefined);
 
     const result = (await krogerModule.executeTool("send_to_kroger_cart", {})) as Record<string, unknown>;
 
     expect(result["success"]).toBe(true);
+    // Only the preference item gets added to cart
     expect(result["added_to_cart"]).toEqual([
-      { grocery_item: "Whole Milk", kroger_product: "Kroger Whole Milk" },
+      { grocery_item: "Eggs", kroger_product: "Kroger Grade A Large Eggs, 12 ct" },
     ]);
-    expect(result["not_found"]).toEqual(["Dragon Fruit Jam"]);
-
-    expect(mockAddToCart).toHaveBeenCalledWith([{ upc: "upc-milk", quantity: 1 }]);
-
-    // Verify search was called with store ID
+    // Bread needs user selection
+    expect(result["needs_selection"]).toEqual([
+      {
+        grocery_item: "Bread",
+        candidates: [
+          { product_id: "p-bread", upc: "upc-bread", name: "Wonder Bread", brand: "Wonder", price: "$2.99", size: "20 oz" },
+        ],
+      },
+    ]);
+    // Only preference item added to cart
+    expect(mockAddToCart).toHaveBeenCalledWith([{ upc: "upc-eggs-pref", quantity: 1 }]);
+    // Kroger search should only be called for Bread (not Eggs)
+    expect(mockSearchProducts).toHaveBeenCalledTimes(1);
     expect(mockSearchProducts).toHaveBeenCalledWith(
-      expect.objectContaining({ term: "Whole Milk", locationId: "store-1", limit: 1 }),
+      expect.objectContaining({ term: "Bread" }),
     );
   });
 

@@ -61,6 +61,18 @@ export function ensureSchema(): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS product_preferences (
+      id TEXT PRIMARY KEY,
+      generic_name TEXT NOT NULL UNIQUE,
+      upc TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      product_name TEXT NOT NULL,
+      brand TEXT,
+      size TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     DROP TABLE IF EXISTS conversation_history;
     CREATE TABLE conversation_history (
       id TEXT PRIMARY KEY,
