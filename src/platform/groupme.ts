@@ -65,20 +65,21 @@ async function classifyMessage(
     conversationContext = `\nRecent group chat messages (oldest first):\n${lines.join("\n")}\n`;
   }
 
-  const prompt = `You are a classifier for a family group chat. Bowdy Bot is an AI assistant in the chat.
+  const prompt = `You are a classifier for a family group chat. Bowdy Bot is an AI assistant that can check grocery lists, the Kroger cart, calendars/schedules, set reminders, search the web, and answer general knowledge questions.
 
-Determine if the following message is directed at Bowdy Bot (the AI assistant) or is just regular conversation between humans.
+Determine if the following message is something Bowdy Bot should respond to, or if it's just regular conversation between family members.
 
-A message IS directed at the bot if:
-- It asks a question or makes a request that an AI assistant would handle (recipes, weather, reminders, general knowledge, etc.)
+A message IS for the bot if:
+- It asks about or wants to manage a list, grocery cart, calendar, or schedule (e.g., "what's on the list", "what's in the cart", "what's today look like")
+- It asks a question or makes a request that requires information lookup or tools (recipes, weather, reminders, general knowledge, product search, etc.)
 - It's a follow-up to a recent bot response (check the conversation context)
 - It directly addresses the bot by name or role
+- When in doubt and the message could reasonably be a request for the bot, say YES
 
-A message is NOT directed at the bot if:
-- It's casual conversation between family members
+A message is NOT for the bot if:
+- It's clearly casual conversation between family members ("lol", "ok sounds good", "love you")
 - It's a reaction or response to another human's message
-- It's sharing personal updates, photos, or memes between family
-- It's coordinating plans directly between family members (e.g., "I'll pick you up at 5")
+- It's sharing personal updates or coordinating plans directly between family members (e.g., "I'll pick you up at 5")
 ${conversationContext}
 Current message from ${senderName}: "${text}"
 
@@ -96,7 +97,7 @@ Respond with exactly "YES" or "NO".`;
         ? response.content[0].text.trim().toUpperCase()
         : "NO";
 
-    logger.debug(
+    logger.info(
       { sender: senderName, text, classification: result },
       "Message classification result",
     );

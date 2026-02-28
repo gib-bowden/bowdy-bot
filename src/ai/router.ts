@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
   BetaContentBlock,
+  BetaMessage,
   BetaSkillParams,
   BetaContainerParams,
   BetaToolUnion,
@@ -32,7 +33,10 @@ function getSystemPrompt(username: string, platform: string): string {
 Be concise, friendly, and practical. You're talking to family members, so be warm but efficient.
 Use the available tools when a user asks you to do something actionable. For general conversation, just respond naturally.
 Today is ${day}, ${now}. The family's timezone is ${config.timezone}.
-You are currently talking to ${username}.${formatting ? "\n" + formatting : ""}${groupChatContext ? "\n" + groupChatContext : ""}`;
+You are currently talking to ${username}.
+
+Family members:
+- Mary Becker (MB) — always refer to her as "Mary Becker" or "MB", never just "Mary".${formatting ? "\n" + formatting : ""}${groupChatContext ? "\n" + groupChatContext : ""}`;
 }
 
 const MODEL = "claude-sonnet-4-6";
@@ -139,35 +143,52 @@ export class AIRouter {
       // If we have a container ID from a previous iteration, reuse it
       const containerParam = containerId ? containerId : container;
 
-      const stream = client.beta.messages.stream({
-        model: MODEL,
-        max_tokens: 2048,
-        system,
-        tools: betaTools,
-        messages,
-        ...(this.skills.length > 0 ? { betas: SKILL_BETAS } : {}),
-        ...(containerParam ? { container: containerParam } : {}),
-      });
-
+      let response!: BetaMessage;
       const toolUseBlocks: BetaContentBlock[] = [];
       let currentText = "";
 
-      for await (const event of stream) {
-        if (event.type === "content_block_delta") {
-          if (event.delta.type === "text_delta") {
-            currentText += event.delta.text;
-            callbacks?.onText?.(event.delta.text);
-          }
-        } else if (event.type === "content_block_start") {
-          if (event.content_block.type === "tool_use") {
-            callbacks?.onToolUse?.(event.content_block.name);
-          } else if (event.content_block.type === "server_tool_use") {
-            callbacks?.onToolUse?.(event.content_block.name);
+      // Attempt stream with one retry for transient failures
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const stream = client.beta.messages.stream({
+          model: MODEL,
+          max_tokens: 2048,
+          system,
+          tools: betaTools,
+          messages,
+          ...(this.skills.length > 0 ? { betas: SKILL_BETAS } : {}),
+          ...(containerParam ? { container: containerParam } : {}),
+        });
+
+        toolUseBlocks.length = 0;
+        currentText = "";
+
+        for await (const event of stream) {
+          if (event.type === "content_block_delta") {
+            if (event.delta.type === "text_delta") {
+              currentText += event.delta.text;
+              callbacks?.onText?.(event.delta.text);
+            }
+          } else if (event.type === "content_block_start") {
+            if (event.content_block.type === "tool_use") {
+              callbacks?.onToolUse?.(event.content_block.name);
+            } else if (event.content_block.type === "server_tool_use") {
+              callbacks?.onToolUse?.(event.content_block.name);
+            }
           }
         }
-      }
 
-      const response = await stream.finalMessage();
+        try {
+          response = await stream.finalMessage();
+          break;
+        } catch (err) {
+          if (attempt === 0) {
+            logger.warn({ err }, "Stream ended without a message, retrying");
+            continue;
+          }
+          logger.error({ err }, "Stream failed after retry");
+          throw err;
+        }
+      }
 
       // Track container ID for reuse within this conversation turn
       if (response.container?.id) {
