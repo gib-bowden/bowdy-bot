@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Module } from "../types.js";
 import { getDefaultAccount, setPreferredStore } from "../../auth/kroger.js";
-import { searchProducts, searchLocations, addToCart } from "./api.js";
+import { searchProducts, searchLocations, addToCart, getCartId, removeFromCart } from "./api.js";
 import { getTasksClient } from "../google-tasks/client.js";
 import {
   lookupPreference,
@@ -97,6 +97,21 @@ const tools: Anthropic.Tool[] = [
         item_name: { type: "string", description: "Generic grocery item name to remove preference for" },
       },
       required: ["item_name"],
+    },
+  },
+  {
+    name: "remove_from_kroger_cart",
+    description: "Remove one or more items from the user's Kroger cart by UPC. Use search_kroger_products or lookup_product_preference to find the UPC first.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        upcs: {
+          type: "array",
+          description: "UPCs of products to remove from the cart",
+          items: { type: "string" },
+        },
+      },
+      required: ["upcs"],
     },
   },
 ];
@@ -332,6 +347,29 @@ export const krogerModule: Module = {
           message: deleted
             ? `Preference for "${input["item_name"]}" removed.`
             : `No preference found for "${input["item_name"]}".`,
+        };
+      }
+      case "remove_from_kroger_cart": {
+        const upcs = input["upcs"] as string[];
+        const cartId = await getCartId();
+        if (!cartId) {
+          return { success: false, error: "No Kroger cart found for this account." };
+        }
+        const removed: string[] = [];
+        const failed: Array<{ upc: string; error: string }> = [];
+        for (const upc of upcs) {
+          try {
+            await removeFromCart(cartId, upc);
+            removed.push(upc);
+          } catch (err) {
+            failed.push({ upc, error: String(err) });
+          }
+        }
+        return {
+          success: failed.length === 0,
+          removed,
+          failed: failed.length > 0 ? failed : undefined,
+          message: `Removed ${removed.length} item(s) from Kroger cart.${failed.length > 0 ? ` ${failed.length} failed.` : ""}`,
         };
       }
       default:

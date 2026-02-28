@@ -96,6 +96,23 @@ export async function addToCart(
   });
 }
 
+export async function getCartId(): Promise<string | null> {
+  const res = (await krogerApiFetch("/carts", { auth: "user" })) as {
+    data?: Array<{ id: string }>;
+  };
+  return res.data?.[0]?.id ?? null;
+}
+
+export async function removeFromCart(
+  cartId: string,
+  upc: string,
+): Promise<void> {
+  await krogerApiFetch(`/carts/${cartId}/items/${upc}`, {
+    method: "DELETE",
+    auth: "user",
+  });
+}
+
 export async function searchLocations(opts: {
   zipCode: string;
   radiusMiles?: number;

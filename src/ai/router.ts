@@ -26,7 +26,7 @@ function getSystemPrompt(username: string, platform: string): string {
       : "";
   const groupChatContext =
     platform === "groupme"
-      ? "You are in a family GroupMe group chat. You were summoned because someone addressed you by name. Keep responses concise and relevant — don't be chatty unless asked."
+      ? "You are in a family GroupMe group chat. Keep responses concise and relevant — don't be chatty unless asked."
       : "";
   return `You are Bowdy Bot, a family assistant for the Bowden household.
 Be concise, friendly, and practical. You're talking to family members, so be warm but efficient.
