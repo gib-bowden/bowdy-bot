@@ -28,7 +28,7 @@ function getSystemPrompt(username: string, platform: string): string {
     platform === "groupme"
       ? "You are in a family GroupMe group chat. You were summoned because someone addressed you by name. Keep responses concise and relevant — don't be chatty unless asked."
       : "";
-  return `You are Bowdy Bot, a helpful family assistant for the Bowden household.
+  return `You are Bowdy Bot, a family assistant for the Bowden household.
 Be concise, friendly, and practical. You're talking to family members, so be warm but efficient.
 Use the available tools when a user asks you to do something actionable. For general conversation, just respond naturally.
 Today is ${day}, ${now}. The family's timezone is ${config.timezone}.
@@ -36,9 +36,7 @@ You are currently talking to ${username}.${formatting ? "\n" + formatting : ""}$
 }
 
 const MODEL = "claude-sonnet-4-6";
-const SKILL_BETAS: Anthropic.Beta.AnthropicBeta[] = [
-  "skills-2025-10-02",
-];
+const SKILL_BETAS: Anthropic.Beta.AnthropicBeta[] = ["skills-2025-10-02"];
 
 export interface StreamCallbacks {
   onText?: (chunk: string) => void;
@@ -72,7 +70,10 @@ export class AIRouter {
         userContent.push({ type: "image", source: { type: "url", url } });
       }
     }
-    userContent.push({ type: "text", text: message.text || "What's in this image?" });
+    userContent.push({
+      type: "text",
+      text: message.text || "What's in this image?",
+    });
 
     const messages: Anthropic.MessageParam[] = [
       ...history.map(
@@ -113,7 +114,12 @@ export class AIRouter {
           : tool,
       ),
       ...(this.skills.length > 0
-        ? [{ type: "code_execution_20260120" as const, name: "code_execution" as const }]
+        ? [
+            {
+              type: "code_execution_20260120" as const,
+              name: "code_execution" as const,
+            },
+          ]
         : []),
       webSearchTool,
     ];
@@ -131,9 +137,7 @@ export class AIRouter {
     let done = false;
     while (!done) {
       // If we have a container ID from a previous iteration, reuse it
-      const containerParam = containerId
-        ? containerId
-        : container;
+      const containerParam = containerId ? containerId : container;
 
       const stream = client.beta.messages.stream({
         model: MODEL,
@@ -179,7 +183,10 @@ export class AIRouter {
 
       if (response.stop_reason === "tool_use") {
         // Add assistant message with all content
-        messages.push({ role: "assistant", content: response.content as Anthropic.ContentBlock[] });
+        messages.push({
+          role: "assistant",
+          content: response.content as Anthropic.ContentBlock[],
+        });
 
         // Execute tools
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
@@ -218,7 +225,10 @@ export class AIRouter {
         // was already streamed to the user via onText callbacks, so we just
         // accumulate it into finalText and re-submit with the same container ID
         // to let the model continue where it left off.
-        messages.push({ role: "assistant", content: response.content as Anthropic.ContentBlock[] });
+        messages.push({
+          role: "assistant",
+          content: response.content as Anthropic.ContentBlock[],
+        });
         finalText += currentText;
       } else {
         finalText += currentText;
