@@ -36,7 +36,10 @@ export async function getClientCredentialsToken(): Promise<string> {
     throw new Error(`Kroger client credentials failed: ${res.status} ${text}`);
   }
 
-  const data = (await res.json()) as { access_token: string; expires_in: number };
+  const data = (await res.json()) as {
+    access_token: string;
+    expires_in: number;
+  };
   clientToken = {
     token: data.access_token,
     expiresAt: Date.now() + (data.expires_in - 60) * 1000, // refresh 60s early
@@ -56,7 +59,9 @@ export function getKrogerConsentUrl(): string {
   return `${KROGER_AUTH_BASE}/authorize?${params.toString()}`;
 }
 
-export async function handleKrogerCallback(code: string): Promise<{ userId: string }> {
+export async function handleKrogerCallback(
+  code: string,
+): Promise<{ userId: string }> {
   const credentials = Buffer.from(
     `${config.krogerClientId}:${config.krogerClientSecret}`,
   ).toString("base64");
@@ -94,16 +99,24 @@ export async function handleKrogerCallback(code: string): Promise<{ userId: stri
 
   if (!profileRes.ok) {
     const text = await profileRes.text();
-    throw new Error(`Kroger profile fetch failed: ${profileRes.status} ${text}`);
+    throw new Error(
+      `Kroger profile fetch failed: ${profileRes.status} ${text}`,
+    );
   }
 
   const profile = (await profileRes.json()) as { data: { id: string } };
   const userId = profile.data.id;
 
   const db = getDb();
-  const existing = db.select().from(krogerAccounts).where(eq(krogerAccounts.krogerUserId, userId)).get();
+  const existing = db
+    .select()
+    .from(krogerAccounts)
+    .where(eq(krogerAccounts.krogerUserId, userId))
+    .get();
 
-  const tokenExpiry = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
+  const tokenExpiry = new Date(
+    Date.now() + tokens.expires_in * 1000,
+  ).toISOString();
 
   if (existing) {
     db.update(krogerAccounts)
@@ -137,8 +150,12 @@ export async function handleKrogerCallback(code: string): Promise<{ userId: stri
 
 export async function getKrogerUserToken(): Promise<string> {
   const db = getDb();
-  const account = db.select().from(krogerAccounts).where(eq(krogerAccounts.isDefault, true)).get()
-    ?? db.select().from(krogerAccounts).get();
+  const account =
+    db
+      .select()
+      .from(krogerAccounts)
+      .where(eq(krogerAccounts.isDefault, true))
+      .get() ?? db.select().from(krogerAccounts).get();
 
   if (!account) {
     throw new Error(
@@ -147,7 +164,10 @@ export async function getKrogerUserToken(): Promise<string> {
   }
 
   // Check if token is still valid (with 60s buffer)
-  if (account.tokenExpiry && new Date(account.tokenExpiry).getTime() > Date.now() + 60_000) {
+  if (
+    account.tokenExpiry &&
+    new Date(account.tokenExpiry).getTime() > Date.now() + 60_000
+  ) {
     return decrypt(account.accessToken);
   }
 
@@ -185,7 +205,9 @@ export async function getKrogerUserToken(): Promise<string> {
     .set({
       accessToken: encrypt(tokens.access_token),
       refreshToken: encrypt(tokens.refresh_token),
-      tokenExpiry: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+      tokenExpiry: new Date(
+        Date.now() + tokens.expires_in * 1000,
+      ).toISOString(),
       updatedAt: new Date().toISOString(),
     })
     .where(eq(krogerAccounts.id, account.id))
@@ -201,9 +223,10 @@ export async function krogerApiFetch(
 ): Promise<unknown> {
   const { method = "GET", body, auth = "client" } = opts;
 
-  const token = auth === "user"
-    ? await getKrogerUserToken()
-    : await getClientCredentialsToken();
+  const token =
+    auth === "user"
+      ? await getKrogerUserToken()
+      : await getClientCredentialsToken();
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
@@ -222,19 +245,31 @@ export async function krogerApiFetch(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Kroger API ${method} ${path} failed: ${res.status} ${text}`);
+    throw new Error(
+      `Kroger API ${method} ${path} failed: ${res.status} ${text}`,
+    );
   }
 
+  if (res.status === 204) return {};
   return res.json();
 }
 
 export function getDefaultAccount() {
   const db = getDb();
-  return db.select().from(krogerAccounts).where(eq(krogerAccounts.isDefault, true)).get()
-    ?? db.select().from(krogerAccounts).get();
+  return (
+    db
+      .select()
+      .from(krogerAccounts)
+      .where(eq(krogerAccounts.isDefault, true))
+      .get() ?? db.select().from(krogerAccounts).get()
+  );
 }
 
-export function setPreferredStore(storeId: string, storeName: string, storeAddress: string) {
+export function setPreferredStore(
+  storeId: string,
+  storeName: string,
+  storeAddress: string,
+) {
   const db = getDb();
   const account = getDefaultAccount();
   if (!account) {
@@ -242,7 +277,12 @@ export function setPreferredStore(storeId: string, storeName: string, storeAddre
   }
 
   db.update(krogerAccounts)
-    .set({ storeId, storeName, storeAddress, updatedAt: new Date().toISOString() })
+    .set({
+      storeId,
+      storeName,
+      storeAddress,
+      updatedAt: new Date().toISOString(),
+    })
     .where(eq(krogerAccounts.id, account.id))
     .run();
 
