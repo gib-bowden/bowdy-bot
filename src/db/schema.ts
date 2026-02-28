@@ -47,6 +47,18 @@ export const krogerAccounts = sqliteTable("kroger_accounts", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
+export const productPreferences = sqliteTable("product_preferences", {
+  id: text("id").primaryKey(), // ULID
+  genericName: text("generic_name").notNull().unique(), // normalized lowercase key, e.g. "eggs"
+  upc: text("upc").notNull(), // Kroger UPC for cart operations
+  productId: text("product_id").notNull(), // Kroger product ID
+  productName: text("product_name").notNull(), // display name, e.g. "Kroger Grade A Large Eggs, 12 ct"
+  brand: text("brand"),
+  size: text("size"),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
 export const conversationHistory = sqliteTable("conversation_history", {
   id: text("id").primaryKey(), // ULID
   userId: text("user_id").notNull(),
