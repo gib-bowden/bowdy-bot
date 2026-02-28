@@ -26,6 +26,7 @@ export const config = {
   twilioAllowlist: process.env["TWILIO_ALLOWLIST"] ?? "",
   twilioWebhookPort: optional("TWILIO_WEBHOOK_PORT", "3000"),
   groupmeBotId: process.env["GROUPME_BOT_ID"] ?? "",
+  groupmeBotUserId: process.env["GROUPME_BOT_USER_ID"] ?? "",
   groupmeWebhookPort: optional("GROUPME_WEBHOOK_PORT", "3000"),
   logLevel: optional("LOG_LEVEL", "info"),
   dbPath: optional("DB_PATH", "./data/bowdy-bot.db"),

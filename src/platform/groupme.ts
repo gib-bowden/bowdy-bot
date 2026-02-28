@@ -5,19 +5,107 @@ import {
 } from "node:http";
 import { config } from "../config.js";
 import { logger } from "../logger.js";
+import { getClient } from "../ai/client.js";
 import type { RequestHandler } from "../auth/server.js";
 import type { IncomingMessage, Platform, MessageHandler } from "./types.js";
 
 const MAX_MESSAGE_LENGTH = 1000;
 const SPLIT_DELAY_MS = 500;
 const GROUPME_API_URL = "https://api.groupme.com/v3/bots/post";
+const MAX_RECENT_MESSAGES = 10;
 
-/** Trigger words that indicate the message is directed at the bot */
-const BOT_TRIGGERS =
-  /\b(bot|bowdy|bowdey|bowdy bot|bowdey bot|assistant|helper|ai|machine)\b/i;
+/** Fast-path: explicit bot name mention skips the classifier */
+const FAST_TRIGGERS = /\b(bowdy|bowdey|bowdy bot|bowdey bot)\b/i;
 
-function isDirectedAtBot(text: string): boolean {
-  return BOT_TRIGGERS.test(text);
+interface RecentMessage {
+  sender: string;
+  text: string;
+  isBot: boolean;
+}
+
+interface MentionAttachment {
+  type: "mentions";
+  user_ids: string[];
+  loci: number[][];
+}
+
+/**
+ * Check if the bot is @mentioned in the GroupMe attachments.
+ */
+function isBotMentioned(
+  attachments: unknown[],
+  botUserId: string,
+): boolean {
+  if (!botUserId) return false;
+  for (const att of attachments) {
+    const a = att as Record<string, unknown>;
+    if (a.type === "mentions" && Array.isArray(a.user_ids)) {
+      const mention = a as unknown as MentionAttachment;
+      if (mention.user_ids.includes(botUserId)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Use Claude Haiku to classify whether a message is directed at the bot.
+ */
+async function classifyMessage(
+  text: string,
+  senderName: string,
+  recentMessages: RecentMessage[],
+): Promise<boolean> {
+  const client = getClient();
+
+  let conversationContext = "";
+  if (recentMessages.length > 0) {
+    const lines = recentMessages.map(
+      (m) => `${m.isBot ? "[Bowdy Bot]" : `[${m.sender}]`}: ${m.text}`,
+    );
+    conversationContext = `\nRecent group chat messages (oldest first):\n${lines.join("\n")}\n`;
+  }
+
+  const prompt = `You are a classifier for a family group chat. Bowdy Bot is an AI assistant in the chat.
+
+Determine if the following message is directed at Bowdy Bot (the AI assistant) or is just regular conversation between humans.
+
+A message IS directed at the bot if:
+- It asks a question or makes a request that an AI assistant would handle (recipes, weather, reminders, general knowledge, etc.)
+- It's a follow-up to a recent bot response (check the conversation context)
+- It directly addresses the bot by name or role
+
+A message is NOT directed at the bot if:
+- It's casual conversation between family members
+- It's a reaction or response to another human's message
+- It's sharing personal updates, photos, or memes between family
+- It's coordinating plans directly between family members (e.g., "I'll pick you up at 5")
+${conversationContext}
+Current message from ${senderName}: "${text}"
+
+Respond with exactly "YES" or "NO".`;
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 3,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const result =
+      response.content[0]?.type === "text"
+        ? response.content[0].text.trim().toUpperCase()
+        : "NO";
+
+    logger.debug(
+      { sender: senderName, text, classification: result },
+      "Message classification result",
+    );
+
+    return result === "YES";
+  } catch (err) {
+    logger.error({ err }, "Message classification failed, falling back to ignore");
+    return false;
+  }
 }
 
 function splitMessage(text: string): string[] {
@@ -82,8 +170,10 @@ async function sendGroupMeMessage(botId: string, text: string): Promise<void> {
 export class GroupMePlatform implements Platform {
   private server: ReturnType<typeof createServer> | null = null;
   private botId: string;
+  private botUserId: string;
   private port: number;
   private oauthHandler: RequestHandler | null = null;
+  private recentMessages: RecentMessage[] = [];
 
   constructor() {
     if (!config.groupmeBotId) {
@@ -91,7 +181,15 @@ export class GroupMePlatform implements Platform {
     }
 
     this.botId = config.groupmeBotId;
+    this.botUserId = config.groupmeBotUserId;
     this.port = parseInt(process.env["PORT"] || config.groupmeWebhookPort, 10);
+  }
+
+  private pushRecentMessage(msg: RecentMessage): void {
+    this.recentMessages.push(msg);
+    if (this.recentMessages.length > MAX_RECENT_MESSAGES) {
+      this.recentMessages.shift();
+    }
   }
 
   setOAuthHandler(handler: RequestHandler): void {
@@ -139,6 +237,13 @@ export class GroupMePlatform implements Platform {
             }
             await sendGroupMeMessage(this.botId, chunks[i]!);
           }
+
+          // Buffer bot response so classifier sees it for follow-ups
+          this.pushRecentMessage({
+            sender: "Bowdy Bot",
+            text: responseText.slice(0, 500),
+            isBot: true,
+          });
         } catch (err) {
           logger.error({ err }, "Error handling GroupMe message");
           try {
@@ -171,7 +276,7 @@ export class GroupMePlatform implements Platform {
         body += chunk.toString();
       });
 
-      req.on("end", () => {
+      req.on("end", async () => {
         // Always respond 200 so GroupMe doesn't retry
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end();
@@ -212,9 +317,39 @@ export class GroupMePlatform implements Platform {
 
         const rawText = (payload.text ?? "").trim();
 
-        // In group chats, only respond when directly addressed
-        // Images without text still need a trigger word — skip if no text at all
-        if (!isDirectedAtBot(rawText)) {
+        // Always buffer the message for classifier context
+        if (rawText) {
+          this.pushRecentMessage({
+            sender: payload.name,
+            text: rawText,
+            isBot: false,
+          });
+        }
+
+        // Determine if the message is directed at the bot:
+        // 1. Fast path: explicit name mention
+        // 2. @mention in attachments
+        // 3. LLM classifier with conversation context
+        let directed = false;
+
+        if (FAST_TRIGGERS.test(rawText)) {
+          directed = true;
+          logger.debug({ user: payload.name }, "Fast-path trigger matched");
+        } else if (
+          Array.isArray(payload.attachments) &&
+          isBotMentioned(payload.attachments, this.botUserId)
+        ) {
+          directed = true;
+          logger.debug({ user: payload.name }, "Bot @mentioned");
+        } else if (rawText) {
+          directed = await classifyMessage(
+            rawText,
+            payload.name,
+            this.recentMessages.slice(0, -1), // exclude current message (already added)
+          );
+        }
+
+        if (!directed) {
           logger.debug(
             { user: payload.name, text: rawText },
             "Ignoring GroupMe message not directed at bot",
