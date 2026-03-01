@@ -40,11 +40,25 @@ vi.mock("./preferences.js", () => ({
   deletePreference: (...args: unknown[]) => mockDeletePreference(...args),
 }));
 
+const mockIsInCart = vi.fn();
+const mockAddCartItem = vi.fn();
+const mockClearCart = vi.fn();
+const mockGetCartSummary = vi.fn();
+
+vi.mock("./cart.js", () => ({
+  isInCart: (...args: unknown[]) => mockIsInCart(...args),
+  addCartItem: (...args: unknown[]) => mockAddCartItem(...args),
+  clearCart: () => mockClearCart(),
+  getCartSummary: () => mockGetCartSummary(),
+}));
+
 import { krogerModule } from "./index.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockLookupPreference.mockReturnValue(null);
+  mockIsInCart.mockResolvedValue(false);
+  mockAddCartItem.mockResolvedValue(undefined);
 });
 
 describe("search_kroger_products", () => {
@@ -313,7 +327,7 @@ describe("send_to_kroger_cart", () => {
     expect(result["success"]).toBe(true);
     // Only the preference item gets added to cart
     expect(result["added_to_cart"]).toEqual([
-      { grocery_item: "Eggs", kroger_product: "Kroger Grade A Large Eggs, 12 ct" },
+      { grocery_item: "Eggs", kroger_product: "Kroger Grade A Large Eggs, 12 ct", quantity: 1 },
     ]);
     // Bread needs user selection
     expect(result["needs_selection"]).toEqual([

@@ -73,6 +73,8 @@ export function ensureSchema(): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    DROP TABLE IF EXISTS cart_items;
+
     DROP TABLE IF EXISTS conversation_history;
     CREATE TABLE conversation_history (
       id TEXT PRIMARY KEY,

@@ -9,7 +9,7 @@ Family AI assistant for the Bowden household — manages tasks, groceries, calen
 - **Database**: SQLite via better-sqlite3 + Drizzle ORM
 - **Platforms**: Console (default), Telegram (grammy), Twilio SMS, GroupMe
 - **Calendar**: Google Calendar API via `googleapis` package (OAuth 2.0)
-- **Grocery**: Google Tasks (list management) + Kroger API (product search, cart sync, product preferences)
+- **Grocery**: Google Tasks (list management, cart tracking) + Kroger API (product search, cart sync, product preferences)
 - **Skills**: Anthropic Skills API — syncs local skill definitions for code execution
 
 ## Project Structure
@@ -36,9 +36,10 @@ src/
     types.ts            # Module interface: { name, description, tools, executeTool }
     registry.ts         # ModuleRegistry — registers modules, routes tool calls
     google-tasks/       # Google Tasks backend (list management, grocery lists)
-    kroger/             # Kroger product search, cart sync, product preferences
+    kroger/             # Kroger product search, Google Tasks cart tracking, product preferences
       index.ts          # 8 tools: search, set store, send to cart, preference CRUD
       api.ts            # Kroger API client (search products, locations, add to cart)
+      cart.ts           # Google Tasks "Kroger Cart" list operations (async)
       preferences.ts    # Product preference DB operations (lookup, save, list, delete)
     calendar/           # Google Calendar module (list, create, delete events)
     chat/               # Fallback chat module (no tools)
@@ -63,7 +64,19 @@ src/
 - **Conversation history**: Loaded per-user before each AI request, saved after response. Max 30 messages (15 exchanges) per user via `src/db/conversation.ts`.
 - **GroupMe message classification**: Three-tier system — (1) fast-path regex for explicit "bowdy" mentions, (2) @mention detection via GroupMe attachments, (3) Claude Haiku classifier with recent message buffer context. See `src/platform/groupme.ts`.
 - **Product preferences**: Maps generic grocery item names to specific Kroger products (UPC, brand, size). Used by `send_to_kroger_cart` to auto-select familiar items without re-searching.
+- **Kroger cart tracking**: Uses a dedicated "Kroger Cart" Google Tasks list. Tasks have formatted titles (`"Product Name (x2)"`) and JSON metadata notes (`{"item":"eggs","upc":"123","product_id":"456"}`). Cart operations are async and visible in the Google Tasks app.
 - **Skills**: Optional. Read from `skills/` directory (one subdirectory per skill with `SKILL.md`). Synced to Anthropic API on startup (best-effort, continues on failure). Enables code execution tool in router.
+
+## Cart System
+
+The Kroger cart uses Google Tasks for persistence instead of SQLite, making items visible in the Google Tasks app:
+
+- **List**: "Kroger Cart" (auto-created)
+- **Task format**:
+  - Title: `Kroger Grade A Large Eggs, 12 ct (x2)` (product name + quantity suffix if > 1)
+  - Notes: `{"item":"eggs","upc":"0001111060932","product_id":"0001111060932"}`
+- **Operations**: `addCartItem()`, `isInCart()`, `getCartSummary()`, `clearCart()` (all async)
+- **Flow**: Items sent to Kroger's cart are also added as tasks. Users can see the cart in Google Tasks. `clearCart()` deletes all tasks.
 
 ## Commands
 
