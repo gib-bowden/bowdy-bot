@@ -1,12 +1,12 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Module } from "./types.js";
+import type { AnyModule } from "./types.js";
 import { logger } from "../logger.js";
 
 export class ModuleRegistry {
-  private modules: Module[] = [];
-  private toolToModule = new Map<string, Module>();
+  private modules: AnyModule[] = [];
+  private toolToModule = new Map<string, AnyModule>();
 
-  register(module: Module): void {
+  register(module: AnyModule): void {
     this.modules.push(module);
     for (const tool of module.tools) {
       this.toolToModule.set(tool.name, module);

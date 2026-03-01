@@ -41,6 +41,17 @@ if (googleOAuthConfigured && config.googleCalendarId) {
   registry.register(calendarModule);
 }
 
+if (googleOAuthConfigured && config.enableEmailTriage && config.emailTriageFamilyAccount) {
+  const { gmailModule } = await import("./modules/gmail/index.js");
+  registry.register(gmailModule);
+  logger.info("Gmail email triage module registered");
+}
+
+// Reminders module — no OAuth dependency, SQLite only
+const { remindersModule } = await import("./modules/reminders/index.js");
+registry.register(remindersModule);
+logger.info("Reminders module registered");
+
 // Sync skills (best-effort — continue without them on failure)
 let skills: BetaSkillParams[] = [];
 try {
@@ -83,6 +94,16 @@ if (googleOAuthConfigured || krogerConfigured) {
   } else {
     startOAuthServer(combinedHandler);
   }
+}
+
+// Start scheduler (needs GroupMe bot ID to send proactive messages)
+if (config.groupmeBotId) {
+  const { startScheduler } = await import("./cron/scheduler.js");
+  startScheduler({
+    groupmeBotId: config.groupmeBotId,
+    timezone: config.timezone,
+  });
+  logger.info("Scheduler started");
 }
 
 logger.info({ platform: config.platform }, "Starting bowdy-bot");
