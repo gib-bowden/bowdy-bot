@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Module } from "../types.js";
+import { assertUnreachable, type Module } from "../types.js";
 import { getTasksClient } from "./client.js";
 
 const taskListCache = new Map<string, string>();
@@ -92,6 +92,39 @@ async function resolveTaskListId(name: string): Promise<string> {
   taskListCache.set(name, id);
   return id;
 }
+
+interface AddTaskInput {
+  title: string;
+  list?: string;
+  due_date?: string;
+}
+
+interface ListTasksInput {
+  list?: string;
+  include_completed?: boolean;
+}
+
+interface CompleteTaskInput {
+  title: string;
+}
+
+interface DeleteTaskInput {
+  title: string;
+  confirm?: boolean;
+}
+
+interface DeleteListInput {
+  list: string;
+  confirm?: boolean;
+}
+
+type GoogleTasksInputs = {
+  add_task: AddTaskInput;
+  list_tasks: ListTasksInput;
+  complete_task: CompleteTaskInput;
+  delete_task: DeleteTaskInput;
+  delete_list: DeleteListInput;
+};
 
 const tools: Anthropic.Tool[] = [
   {
@@ -193,11 +226,10 @@ const tools: Anthropic.Tool[] = [
   },
 ];
 
-async function addTask(input: Record<string, unknown>): Promise<unknown> {
+async function addTask(input: AddTaskInput): Promise<unknown> {
   const client = await getTasksClient();
-  const title = input["title"] as string;
-  const list = (input["list"] as string) || "general";
-  const dueDate = input["due_date"] as string | undefined;
+  const { title, due_date: dueDate } = input;
+  const list = input.list || "general";
 
   const taskListId = await resolveTaskListId(list);
 
@@ -217,10 +249,10 @@ async function addTask(input: Record<string, unknown>): Promise<unknown> {
   };
 }
 
-async function listTasks(input: Record<string, unknown>): Promise<unknown> {
+async function listTasks(input: ListTasksInput): Promise<unknown> {
   const client = await getTasksClient();
-  const list = (input["list"] as string) || "all";
-  const includeCompleted = (input["include_completed"] as boolean) ?? false;
+  const list = input.list || "all";
+  const includeCompleted = input.include_completed ?? false;
 
   if (list === "all") {
     const listsResponse = await client.tasklists.list({ maxResults: 100 });
@@ -281,9 +313,9 @@ async function listTasks(input: Record<string, unknown>): Promise<unknown> {
   return { list, count: items.length, items };
 }
 
-async function completeTask(input: Record<string, unknown>): Promise<unknown> {
+async function completeTask(input: CompleteTaskInput): Promise<unknown> {
   const client = await getTasksClient();
-  const title = input["title"] as string;
+  const { title } = input;
   const matches = await findTasksAcrossLists(title);
   const result = pickBestMatch(matches, title);
 
@@ -316,10 +348,10 @@ function confirmationPrompt(description: string, details: Record<string, unknown
   };
 }
 
-async function deleteTask(input: Record<string, unknown>): Promise<unknown> {
+async function deleteTask(input: DeleteTaskInput): Promise<unknown> {
   const client = await getTasksClient();
-  const title = input["title"] as string;
-  const confirm = (input["confirm"] as boolean) ?? false;
+  const { title } = input;
+  const confirm = input.confirm ?? false;
   const matches = await findTasksAcrossLists(title, { includeCompleted: true });
   const result = pickBestMatch(matches, title);
 
@@ -350,10 +382,10 @@ async function deleteTask(input: Record<string, unknown>): Promise<unknown> {
   return { success: true, title: match.title, list: match.listName };
 }
 
-async function deleteList(input: Record<string, unknown>): Promise<unknown> {
+async function deleteList(input: DeleteListInput): Promise<unknown> {
   const client = await getTasksClient();
-  const name = (input["list"] as string).toLowerCase();
-  const confirm = (input["confirm"] as boolean) ?? false;
+  const name = input.list.toLowerCase();
+  const confirm = input.confirm ?? false;
 
   // Populate cache
   const listsResponse = await client.tasklists.list({ maxResults: 100 });
@@ -386,24 +418,24 @@ async function deleteList(input: Record<string, unknown>): Promise<unknown> {
   return { success: true, list: name, deleted_tasks: taskCount };
 }
 
-export const googleTasksModule: Module = {
+export const googleTasksModule: Module<GoogleTasksInputs> = {
   name: "tasks",
   description: "Task and grocery list management via Google Tasks",
   tools,
-  async executeTool(name: string, input: Record<string, unknown>): Promise<unknown> {
+  async executeTool(name, input): Promise<unknown> {
     switch (name) {
       case "add_task":
-        return addTask(input);
+        return addTask(input as AddTaskInput);
       case "list_tasks":
-        return listTasks(input);
+        return listTasks(input as ListTasksInput);
       case "complete_task":
-        return completeTask(input);
+        return completeTask(input as CompleteTaskInput);
       case "delete_task":
-        return deleteTask(input);
+        return deleteTask(input as DeleteTaskInput);
       case "delete_list":
-        return deleteList(input);
+        return deleteList(input as DeleteListInput);
       default:
-        throw new Error(`Unknown tool: ${name}`);
+        return assertUnreachable(name);
     }
   },
 };

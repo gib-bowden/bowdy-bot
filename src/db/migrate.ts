@@ -93,6 +93,48 @@ export function ensureSchema(): void {
       content TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS email_triage_sessions (
+      id TEXT PRIMARY KEY,
+      account_email TEXT NOT NULL,
+      triage_email_thread_id TEXT,
+      triage_email_message_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      email_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      processed_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS email_triage_items (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES email_triage_sessions(id),
+      gmail_message_id TEXT NOT NULL,
+      gmail_thread_id TEXT NOT NULL,
+      account_email TEXT NOT NULL,
+      subject TEXT,
+      sender TEXT,
+      snippet TEXT,
+      received_at TEXT,
+      category TEXT,
+      summary TEXT,
+      suggested_action TEXT,
+      action_taken TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS email_rules (
+      id TEXT PRIMARY KEY,
+      account_email TEXT,
+      match_type TEXT NOT NULL,
+      match_value TEXT NOT NULL,
+      action TEXT NOT NULL,
+      label TEXT,
+      applied_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(match_type, match_value, account_email)
+    );
   `);
 
   // Add columns to existing tables (safe to fail if already exists)

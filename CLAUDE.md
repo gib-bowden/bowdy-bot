@@ -34,7 +34,7 @@ src/
     crypto.ts           # AES-256-GCM token encryption at rest
     server.ts           # OAuth callback HTTP server (Google + Kroger routes)
   modules/
-    types.ts            # Module interface: { name, description, tools, executeTool }
+    types.ts            # Module<T> generic interface: { name, description, tools, executeTool }
     registry.ts         # ModuleRegistry — registers modules, routes tool calls
     google-tasks/       # Google Tasks backend (list management, grocery lists)
     kroger/             # Kroger product search, Google Tasks cart tracking, product preferences
@@ -61,11 +61,11 @@ src/
 
 ## Key Patterns
 
-- **Module interface**: Each module exports `{ name, description, tools: Anthropic.Tool[], executeTool(name, input) }`. Register in `src/index.ts` via `registry.register(module)`.
+- **Module interface**: `Module<T>` is generic over a tool→input type map. Each module defines typed input interfaces per tool, combines them into a map type (e.g. `CalendarInputs`), and exports as `Module<CalendarInputs>`. Register in `src/index.ts` via `registry.register(module)`.
 - **Tool routing**: Claude IS the router. No intent matching — Claude sees all tool descriptions and picks the right one.
 - **Optional modules**: Some modules (e.g. calendar, kroger) only register if their config is present. Check config values before registering.
 - **Config**: `required()` throws on missing env vars, `optional()` provides defaults. Optional features use `process.env["KEY"] ?? ""` and check truthiness before use.
-- **Input typing**: Tool inputs arrive as `Record<string, unknown>` — cast inside handler functions.
+- **Input typing**: Each module defines typed input interfaces (e.g. `CreateEventInput`) and a `*Inputs` map type. Helper functions accept typed inputs directly. The `executeTool` switch casts `input as SpecificInput` at each case (TS can't narrow generics via switch). External callers get full type safety on tool name + input shape.
 - **File extensions**: Always use `.js` extensions in imports (ESM requirement even for .ts files).
 - **Conversation history**: Loaded per-user before each AI request, saved after response. Max 30 messages (15 exchanges) per user via `src/db/conversation.ts`.
 - **GroupMe message classification**: Three-tier system — (1) fast-path regex for explicit "bowdy" mentions, (2) @mention detection via GroupMe attachments, (3) Claude Haiku classifier with recent message buffer context. See `src/platform/groupme.ts`.
