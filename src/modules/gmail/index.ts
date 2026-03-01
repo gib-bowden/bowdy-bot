@@ -6,6 +6,31 @@ import { listRules, saveRule, deleteRule } from "./rules.js";
 import { getDb, schema } from "../../db/client.js";
 import { eq, desc } from "drizzle-orm";
 
+interface ScanInboxInput {
+  account_email?: string;
+}
+
+interface ListEmailRulesInput {
+  account_email?: string;
+}
+
+interface AddEmailRuleInput {
+  match_type: "sender" | "domain" | "subject_contains";
+  match_value: string;
+  action: "archive" | "skip" | "important" | "label";
+  account_email?: string;
+  label?: string;
+}
+
+interface DeleteEmailRuleInput {
+  rule_id: string;
+}
+
+interface EmailTriageStatusInput {
+  account_email?: string;
+  limit?: number;
+}
+
 const tools: Anthropic.Tool[] = [
   {
     name: "scan_inbox",
@@ -121,6 +146,7 @@ export const gmailModule: Module = {
   ): Promise<unknown> {
     switch (name) {
       case "scan_inbox": {
+        const { account_email } = input as ScanInboxInput;
         const familyEmail = config.emailTriageFamilyAccount;
         if (!familyEmail) {
           return {
@@ -129,9 +155,8 @@ export const gmailModule: Module = {
           };
         }
 
-        const accountEmail = input["account_email"] as string | undefined;
-        const accounts = accountEmail
-          ? [accountEmail]
+        const accounts = account_email
+          ? [account_email]
           : config.emailTriageAccounts
               .split(",")
               .map((e) => e.trim())
@@ -180,8 +205,8 @@ export const gmailModule: Module = {
       }
 
       case "list_email_rules": {
-        const accountEmail = input["account_email"] as string | undefined;
-        const rules = listRules(accountEmail);
+        const { account_email: ruleAccountEmail } = input as ListEmailRulesInput;
+        const rules = listRules(ruleAccountEmail);
         return {
           success: true,
           count: rules.length,
@@ -198,12 +223,13 @@ export const gmailModule: Module = {
       }
 
       case "add_email_rule": {
+        const { match_type, match_value, action, account_email: ruleAccount, label } = input as unknown as AddEmailRuleInput;
         const rule = saveRule({
-          accountEmail: (input["account_email"] as string) ?? null,
-          matchType: input["match_type"] as string,
-          matchValue: input["match_value"] as string,
-          action: input["action"] as string,
-          label: (input["label"] as string) ?? null,
+          accountEmail: ruleAccount ?? null,
+          matchType: match_type,
+          matchValue: match_value,
+          action,
+          label: label ?? null,
         });
         return {
           success: true,
@@ -219,7 +245,8 @@ export const gmailModule: Module = {
       }
 
       case "delete_email_rule": {
-        const deleted = deleteRule(input["rule_id"] as string);
+        const { rule_id } = input as unknown as DeleteEmailRuleInput;
+        const deleted = deleteRule(rule_id);
         return {
           success: deleted,
           message: deleted ? "Rule deleted." : "Rule not found.",
@@ -227,27 +254,24 @@ export const gmailModule: Module = {
       }
 
       case "email_triage_status": {
+        const { account_email: statusAccount, limit: rawLimit } = input as EmailTriageStatusInput;
         const db = getDb();
-        const accountEmail = input["account_email"] as string | undefined;
-        const limit = Math.min((input["limit"] as number) ?? 5, 20);
+        const limit = Math.min(rawLimit ?? 5, 20);
 
-        let sessions;
-        if (accountEmail) {
-          sessions = db
-            .select()
-            .from(schema.emailTriageSessions)
-            .where(eq(schema.emailTriageSessions.accountEmail, accountEmail))
-            .orderBy(desc(schema.emailTriageSessions.createdAt))
-            .limit(limit)
-            .all();
-        } else {
-          sessions = db
-            .select()
-            .from(schema.emailTriageSessions)
-            .orderBy(desc(schema.emailTriageSessions.createdAt))
-            .limit(limit)
-            .all();
-        }
+        const sessions = statusAccount
+          ? db
+              .select()
+              .from(schema.emailTriageSessions)
+              .where(eq(schema.emailTriageSessions.accountEmail, statusAccount))
+              .orderBy(desc(schema.emailTriageSessions.createdAt))
+              .limit(limit)
+              .all()
+          : db
+              .select()
+              .from(schema.emailTriageSessions)
+              .orderBy(desc(schema.emailTriageSessions.createdAt))
+              .limit(limit)
+              .all();
 
         // Count pending items across all sessions
         const pendingItems = db
@@ -256,7 +280,7 @@ export const gmailModule: Module = {
           .where(eq(schema.emailTriageItems.status, "pending"))
           .all();
 
-        const rules = listRules(accountEmail);
+        const rules = listRules(statusAccount);
 
         return {
           success: true,
