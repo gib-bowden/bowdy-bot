@@ -11,6 +11,61 @@ import {
 } from "./preferences.js";
 import { addCartItem, isInCart, clearCart, getCartSummary } from "./cart.js";
 
+interface ParsedItem {
+  grocery_item: string;
+  search_term: string;
+  quantity: number;
+}
+
+interface SearchProductsInput {
+  term: string;
+  limit?: number;
+}
+
+interface SetStoreInput {
+  zip_code: string;
+  store_index?: number;
+}
+
+interface SendToCartInput {
+  items?: ParsedItem[];
+}
+
+interface ViewCartInput {}
+
+interface ClearCartInput {}
+
+interface LookupPreferenceInput {
+  item_name: string;
+}
+
+interface SavePreferenceInput {
+  item_name: string;
+  upc: string;
+  product_id: string;
+  product_name: string;
+  brand?: string;
+  size?: string;
+}
+
+interface ListPreferencesInput {}
+
+interface DeletePreferenceInput {
+  item_name: string;
+}
+
+type KrogerInputs = {
+  search_kroger_products: SearchProductsInput;
+  set_kroger_store: SetStoreInput;
+  send_to_kroger_cart: SendToCartInput;
+  view_kroger_cart: ViewCartInput;
+  clear_kroger_cart: ClearCartInput;
+  lookup_product_preference: LookupPreferenceInput;
+  save_product_preference: SavePreferenceInput;
+  list_product_preferences: ListPreferencesInput;
+  delete_product_preference: DeletePreferenceInput;
+};
+
 const tools: Anthropic.Tool[] = [
   {
     name: "search_kroger_products",
@@ -177,10 +232,10 @@ function getStoreId(): string | null {
 }
 
 async function searchKrogerProducts(
-  input: Record<string, unknown>,
+  input: SearchProductsInput,
 ): Promise<unknown> {
-  const term = input["term"] as string;
-  const limit = Math.min((input["limit"] as number) ?? 5, 20);
+  const { term } = input;
+  const limit = Math.min(input.limit ?? 5, 20);
   const storeId = getStoreId();
 
   if (!storeId) {
@@ -208,10 +263,9 @@ async function searchKrogerProducts(
 }
 
 async function setKrogerStore(
-  input: Record<string, unknown>,
+  input: SetStoreInput,
 ): Promise<unknown> {
-  const zipCode = input["zip_code"] as string;
-  const storeIndex = input["store_index"] as number | undefined;
+  const { zip_code: zipCode, store_index: storeIndex } = input;
 
   const locations = await searchLocations({ zipCode, limit: 5 });
 
@@ -252,14 +306,8 @@ async function setKrogerStore(
   };
 }
 
-interface ParsedItem {
-  grocery_item: string;
-  search_term: string;
-  quantity: number;
-}
-
 async function sendToKrogerCart(
-  input: Record<string, unknown>,
+  input: SendToCartInput,
 ): Promise<unknown> {
   const storeId = getStoreId();
   if (!storeId) {
@@ -272,7 +320,7 @@ async function sendToKrogerCart(
 
   let parsedItems: ParsedItem[];
 
-  const rawItems = input["items"] as ParsedItem[] | undefined;
+  const rawItems = input.items;
   if (rawItems && rawItems.length > 0) {
     parsedItems = rawItems.map((i) => ({
       grocery_item: i.grocery_item,
@@ -423,21 +471,18 @@ async function sendToKrogerCart(
   };
 }
 
-export const krogerModule: Module = {
+export const krogerModule: Module<KrogerInputs> = {
   name: "kroger",
   description: "Kroger product search and cart sync",
   tools,
-  async executeTool(
-    name: string,
-    input: Record<string, unknown>,
-  ): Promise<unknown> {
+  async executeTool(name, input): Promise<unknown> {
     switch (name) {
       case "search_kroger_products":
-        return searchKrogerProducts(input);
+        return searchKrogerProducts(input as SearchProductsInput);
       case "set_kroger_store":
-        return setKrogerStore(input);
+        return setKrogerStore(input as SetStoreInput);
       case "send_to_kroger_cart":
-        return sendToKrogerCart(input);
+        return sendToKrogerCart(input as SendToCartInput);
       case "view_kroger_cart": {
         const summary = await getCartSummary();
         if (summary.count === 0) {
@@ -470,7 +515,7 @@ export const krogerModule: Module = {
         };
       }
       case "lookup_product_preference": {
-        const itemName = input["item_name"] as string;
+        const { item_name: itemName } = input as LookupPreferenceInput;
         const pref = lookupPreference(itemName);
         if (pref) {
           return {
@@ -492,13 +537,14 @@ export const krogerModule: Module = {
         };
       }
       case "save_product_preference": {
+        const { item_name, upc, product_id, product_name, brand, size } = input as SavePreferenceInput;
         const saved = savePreference({
-          genericName: input["item_name"] as string,
-          upc: input["upc"] as string,
-          productId: input["product_id"] as string,
-          productName: input["product_name"] as string,
-          brand: (input["brand"] as string) ?? null,
-          size: (input["size"] as string) ?? null,
+          genericName: item_name,
+          upc,
+          productId: product_id,
+          productName: product_name,
+          brand: brand ?? null,
+          size: size ?? null,
         });
         return {
           success: true,
@@ -528,12 +574,13 @@ export const krogerModule: Module = {
         };
       }
       case "delete_product_preference": {
-        const deleted = deletePreference(input["item_name"] as string);
+        const { item_name } = input as DeletePreferenceInput;
+        const deleted = deletePreference(item_name);
         return {
           success: deleted,
           message: deleted
-            ? `Preference for "${input["item_name"]}" removed.`
-            : `No preference found for "${input["item_name"]}".`,
+            ? `Preference for "${item_name}" removed.`
+            : `No preference found for "${item_name}".`,
         };
       }
       default:

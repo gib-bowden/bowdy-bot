@@ -31,6 +31,14 @@ interface EmailTriageStatusInput {
   limit?: number;
 }
 
+type GmailInputs = {
+  scan_inbox: ScanInboxInput;
+  list_email_rules: ListEmailRulesInput;
+  add_email_rule: AddEmailRuleInput;
+  delete_email_rule: DeleteEmailRuleInput;
+  email_triage_status: EmailTriageStatusInput;
+};
+
 const tools: Anthropic.Tool[] = [
   {
     name: "scan_inbox",
@@ -136,14 +144,11 @@ const tools: Anthropic.Tool[] = [
   },
 ];
 
-export const gmailModule: Module = {
+export const gmailModule: Module<GmailInputs> = {
   name: "gmail",
   description: "Gmail email triage — scan, classify, and manage inbox emails",
   tools,
-  async executeTool(
-    name: string,
-    input: Record<string, unknown>,
-  ): Promise<unknown> {
+  async executeTool(name, input): Promise<unknown> {
     switch (name) {
       case "scan_inbox": {
         const { account_email } = input as ScanInboxInput;

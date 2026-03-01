@@ -48,6 +48,31 @@ export function ensureOffset(dt: string): string {
   return dt + tzOffset();
 }
 
+interface ListEventsInput {
+  start_date?: string;
+  end_date?: string;
+  days?: number;
+  query?: string;
+}
+
+interface CreateEventInput {
+  title: string;
+  start: string;
+  end: string;
+  description?: string;
+  location?: string;
+}
+
+interface DeleteEventInput {
+  title: string;
+}
+
+type CalendarInputs = {
+  list_events: ListEventsInput;
+  create_event: CreateEventInput;
+  delete_event: DeleteEventInput;
+};
+
 const tools: Anthropic.Tool[] = [
   {
     name: "list_events",
@@ -122,13 +147,11 @@ const tools: Anthropic.Tool[] = [
   },
 ];
 
-async function listEvents(input: Record<string, unknown>): Promise<unknown> {
+async function listEvents(input: ListEventsInput): Promise<unknown> {
   const calendar = await getCalendarClient();
   const calendarId = getCalendarId();
-  const startDate = input["start_date"] as string | undefined;
-  const endDate = input["end_date"] as string | undefined;
-  const days = (input["days"] as number) || 7;
-  const query = input["query"] as string | undefined;
+  const { start_date: startDate, end_date: endDate, query } = input;
+  const days = input.days || 7;
 
   // Use explicit date range if provided, otherwise fall back to days-from-now
   const timeMin = startDate ? startOfDayInTz(startDate) : nowInTz();
@@ -156,15 +179,11 @@ async function listEvents(input: Record<string, unknown>): Promise<unknown> {
   return { count: events.length, ...(startDate ? { startDate, endDate } : { days }), events };
 }
 
-async function createEvent(input: Record<string, unknown>): Promise<unknown> {
+async function createEvent(input: CreateEventInput): Promise<unknown> {
   const calendar = await getCalendarClient();
   const calendarId = getCalendarId();
 
-  const title = input["title"] as string;
-  const start = input["start"] as string;
-  const end = input["end"] as string;
-  const description = input["description"] as string | undefined;
-  const location = input["location"] as string | undefined;
+  const { title, start, end, description, location } = input;
 
   const response = await calendar.events.insert({
     calendarId,
@@ -186,10 +205,10 @@ async function createEvent(input: Record<string, unknown>): Promise<unknown> {
   };
 }
 
-async function deleteEvent(input: Record<string, unknown>): Promise<unknown> {
+async function deleteEvent(input: DeleteEventInput): Promise<unknown> {
   const calendar = await getCalendarClient();
   const calendarId = getCalendarId();
-  const title = (input["title"] as string).toLowerCase();
+  const title = input.title.toLowerCase();
 
   // Search for upcoming events matching the title
   const response = await calendar.events.list({
@@ -207,7 +226,7 @@ async function deleteEvent(input: Record<string, unknown>): Promise<unknown> {
   );
 
   if (!match || !match.id) {
-    return { success: false, error: `No upcoming event matching "${input["title"]}" found` };
+    return { success: false, error: `No upcoming event matching "${input.title}" found` };
   }
 
   await calendar.events.delete({ calendarId, eventId: match.id });
@@ -219,18 +238,18 @@ async function deleteEvent(input: Record<string, unknown>): Promise<unknown> {
   };
 }
 
-export const calendarModule: Module = {
+export const calendarModule: Module<CalendarInputs> = {
   name: "calendar",
   description: "Google Calendar integration for viewing, creating, and deleting events",
   tools,
-  async executeTool(name: string, input: Record<string, unknown>): Promise<unknown> {
+  async executeTool(name, input): Promise<unknown> {
     switch (name) {
       case "list_events":
-        return listEvents(input);
+        return listEvents(input as ListEventsInput);
       case "create_event":
-        return createEvent(input);
+        return createEvent(input as CreateEventInput);
       case "delete_event":
-        return deleteEvent(input);
+        return deleteEvent(input as DeleteEventInput);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }

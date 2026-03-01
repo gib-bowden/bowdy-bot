@@ -6,6 +6,23 @@ import { getDb, schema } from "../../db/client.js";
 import { scheduleReminder, cancelScheduledReminder } from "../../cron/reminders.js";
 import { config } from "../../config.js";
 
+interface CreateReminderInput {
+  message: string;
+  due_at: string;
+}
+
+interface ListRemindersInput {}
+
+interface CancelReminderInput {
+  message: string;
+}
+
+type RemindersInputs = {
+  create_reminder: CreateReminderInput;
+  list_reminders: ListRemindersInput;
+  cancel_reminder: CancelReminderInput;
+};
+
 const tools: Anthropic.Tool[] = [
   {
     name: "create_reminder",
@@ -53,9 +70,8 @@ const tools: Anthropic.Tool[] = [
   },
 ];
 
-function createReminder(input: Record<string, unknown>): unknown {
-  const message = input["message"] as string;
-  const dueAtStr = input["due_at"] as string;
+function createReminder(input: CreateReminderInput): unknown {
+  const { message, due_at: dueAtStr } = input;
   const dueAt = new Date(dueAtStr);
 
   if (isNaN(dueAt.getTime())) {
@@ -110,8 +126,8 @@ function listReminders(): unknown {
   };
 }
 
-function cancelReminder(input: Record<string, unknown>): unknown {
-  const searchText = (input["message"] as string).toLowerCase();
+function cancelReminder(input: CancelReminderInput): unknown {
+  const searchText = input.message.toLowerCase();
   const db = getDb();
 
   const unfired = db
@@ -127,7 +143,7 @@ function cancelReminder(input: Record<string, unknown>): unknown {
   if (!match) {
     return {
       success: false,
-      error: `No pending reminder matching "${input["message"]}" found`,
+      error: `No pending reminder matching "${input.message}" found`,
     };
   }
 
@@ -146,22 +162,19 @@ function cancelReminder(input: Record<string, unknown>): unknown {
   };
 }
 
-export const remindersModule: Module = {
+export const remindersModule: Module<RemindersInputs> = {
   name: "reminders",
   description:
     "Create, list, and cancel reminders that fire at a specific time",
   tools,
-  async executeTool(
-    name: string,
-    input: Record<string, unknown>,
-  ): Promise<unknown> {
+  async executeTool(name, input): Promise<unknown> {
     switch (name) {
       case "create_reminder":
-        return createReminder(input);
+        return createReminder(input as CreateReminderInput);
       case "list_reminders":
         return listReminders();
       case "cancel_reminder":
-        return cancelReminder(input);
+        return cancelReminder(input as CancelReminderInput);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }

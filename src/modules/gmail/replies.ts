@@ -105,9 +105,13 @@ export async function processTriageReplies(familyEmail: string): Promise<void> {
               // Create calendar event from email context
               try {
                 const { calendarModule } = await import("../calendar/index.js");
-                await calendarModule.executeTool("create_calendar_event", {
+                const now = new Date();
+                const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
+                await calendarModule.executeTool("create_event", {
                   title: item.subject ?? "Event from email",
-                  description: `From: ${item.sender}\n\nCreated from email triage.`,
+                  start: now.toISOString(),
+                  end: oneHourLater.toISOString(),
+                  description: `From: ${item.sender}\n\nCreated from email triage — update the time.`,
                 });
                 db.update(schema.emailTriageItems)
                   .set({ actionTaken: "calendar_event_created", status: "actioned" })
@@ -124,9 +128,8 @@ export async function processTriageReplies(familyEmail: string): Promise<void> {
             case "task": {
               try {
                 const { googleTasksModule } = await import("../google-tasks/index.js");
-                await googleTasksModule.executeTool("create_task", {
+                await googleTasksModule.executeTool("add_task", {
                   title: item.subject ?? "Task from email",
-                  notes: `From: ${item.sender}\n\nCreated from email triage.`,
                 });
                 db.update(schema.emailTriageItems)
                   .set({ actionTaken: "task_created", status: "actioned" })
