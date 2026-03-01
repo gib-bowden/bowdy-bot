@@ -23,9 +23,12 @@ export interface EmailContent {
 /**
  * List unread messages in the inbox since a given date.
  */
+const MAX_TRIAGE_MESSAGES = 50;
+
 export async function listUnreadMessages(
   email: string,
   since?: string,
+  maxMessages: number = MAX_TRIAGE_MESSAGES,
 ): Promise<EmailMessage[]> {
   const gmail = await getGmailClient(email);
 
@@ -41,10 +44,11 @@ export async function listUnreadMessages(
   let pageToken: string | undefined;
 
   do {
+    const pageSize = Math.min(100, maxMessages - messages.length);
     const response = await gmail.users.messages.list({
       userId: "me",
       q: query,
-      maxResults: 100,
+      maxResults: pageSize,
       pageToken,
     });
 
@@ -54,6 +58,7 @@ export async function listUnreadMessages(
     // Fetch metadata for each message
     for (const msg of messageIds) {
       if (!msg.id) continue;
+      if (messages.length >= maxMessages) break;
       try {
         const detail = await gmail.users.messages.get({
           userId: "me",
@@ -79,7 +84,7 @@ export async function listUnreadMessages(
         logger.warn({ err, messageId: msg.id }, "Failed to fetch message metadata");
       }
     }
-  } while (pageToken);
+  } while (pageToken && messages.length < maxMessages);
 
   return messages;
 }
