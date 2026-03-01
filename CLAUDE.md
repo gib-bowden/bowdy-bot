@@ -1,11 +1,12 @@
 # Bowdy Bot
 
-Family AI assistant for the Bowden household — manages tasks, groceries, calendar, and general chat.
+Family AI assistant for the Bowden household — manages tasks, groceries, calendar, reminders, and general chat.
 
 ## Tech Stack
 
 - **Runtime**: Node.js 22+, TypeScript, ESM (`"type": "module"`)
-- **AI**: Anthropic Claude SDK (claude-sonnet-4-6) with tool_use for routing; Claude Haiku for GroupMe message classification
+- **AI**: Anthropic Claude SDK (claude-sonnet-4-6) with tool_use for routing; Claude Haiku for GroupMe message classification + morning briefing generation
+- **Scheduling**: node-schedule for cron jobs (morning briefing) and date-based scheduling (reminders)
 - **Database**: SQLite via better-sqlite3 + Drizzle ORM
 - **Platforms**: Console (default), Telegram (grammy), Twilio SMS, GroupMe
 - **Calendar**: Google Calendar API via `googleapis` package (OAuth 2.0)
@@ -24,7 +25,7 @@ src/
     router.ts           # AIRouter — Claude streaming + tool execution loop (skills, web search, code execution)
   db/
     client.ts           # SQLite connection (getDb(), schema exports)
-    schema.ts           # Drizzle schema (users, googleAccounts, krogerAccounts, productPreferences, conversationHistory)
+    schema.ts           # Drizzle schema (users, googleAccounts, krogerAccounts, productPreferences, reminders, conversationHistory)
     migrate.ts          # Schema migration (ensureSchema())
     conversation.ts     # Conversation history — load/save per-user message history (max 30 messages)
   auth/
@@ -42,7 +43,12 @@ src/
       cart.ts           # Google Tasks "Kroger Cart" list operations (async)
       preferences.ts    # Product preference DB operations (lookup, save, list, delete)
     calendar/           # Google Calendar module (list, create, delete events)
+    reminders/          # Reminder tools (create, list, cancel) — SQLite + node-schedule
     chat/               # Fallback chat module (no tools)
+  cron/
+    scheduler.ts        # startScheduler() — morning briefing cron + reminder recovery on startup
+    morning-briefing.ts # Pulls today's calendar + tasks, Claude Haiku summary, posts to GroupMe
+    reminders.ts        # scheduleReminder(), cancelScheduledReminder(), recoverReminders()
   skills/
     manager.ts          # Syncs skill definitions from skills/ dir to Anthropic API
   platform/
@@ -66,6 +72,8 @@ src/
 - **Product preferences**: Maps generic grocery item names to specific Kroger products (UPC, brand, size). Used by `send_to_kroger_cart` to auto-select familiar items without re-searching.
 - **Kroger cart tracking**: Uses a dedicated "Kroger Cart" Google Tasks list. Tasks have formatted titles (`"Product Name (x2)"`) and JSON metadata notes (`{"item":"eggs","upc":"123","product_id":"456"}`). Cart operations are async and visible in the Google Tasks app.
 - **Skills**: Optional. Read from `skills/` directory (one subdirectory per skill with `SKILL.md`). Synced to Anthropic API on startup (best-effort, continues on failure). Enables code execution tool in router.
+- **Proactive features**: Morning briefing (daily cron) and reminders (exact-time scheduling) run as in-process scheduled jobs via `node-schedule`. Both send messages to GroupMe via exported `sendGroupMeMessage()`. The scheduler starts in `src/index.ts` when `GROUPME_BOT_ID` is set.
+- **Reminder recovery**: On startup, `recoverReminders()` queries unfired reminders from SQLite and re-schedules them (or fires immediately if overdue). This handles process restarts gracefully.
 
 ## Cart System
 
@@ -93,6 +101,6 @@ npx vitest run          # Run tests
 
 Required: `ANTHROPIC_API_KEY`
 
-Optional: `PLATFORM`, `TELEGRAM_BOT_TOKEN`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `TWILIO_ALLOWLIST`, `TWILIO_WEBHOOK_PORT`, `GROUPME_BOT_ID`, `GROUPME_BOT_USER_ID` (enables @mention detection), `GROUPME_WEBHOOK_PORT`, `LOG_LEVEL`, `DB_PATH`, `TZ`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`, `GOOGLE_OAUTH_PORT`, `GOOGLE_CALENDAR_ID`, `TOKEN_ENCRYPTION_KEY` (required when Google OAuth or Kroger is enabled; generate with `openssl rand -hex 32`), `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET`, `KROGER_OAUTH_REDIRECT_URI`
+Optional: `PLATFORM`, `TELEGRAM_BOT_TOKEN`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `TWILIO_ALLOWLIST`, `TWILIO_WEBHOOK_PORT`, `GROUPME_BOT_ID`, `GROUPME_BOT_USER_ID` (enables @mention detection), `GROUPME_WEBHOOK_PORT`, `LOG_LEVEL`, `DB_PATH`, `TZ`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`, `GOOGLE_OAUTH_PORT`, `GOOGLE_CALENDAR_ID`, `TOKEN_ENCRYPTION_KEY` (required when Google OAuth or Kroger is enabled; generate with `openssl rand -hex 32`), `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET`, `KROGER_OAUTH_REDIRECT_URI`, `ENABLE_MORNING_BRIEFING` (default `"true"`), `MORNING_BRIEFING_HOUR` (0-23, default `"8"`)
 
 See `.env.example` for full list with defaults.

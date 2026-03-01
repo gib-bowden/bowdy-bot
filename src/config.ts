@@ -41,4 +41,6 @@ export const config = {
   krogerClientId: process.env["KROGER_CLIENT_ID"] ?? "",
   krogerClientSecret: process.env["KROGER_CLIENT_SECRET"] ?? "",
   krogerOAuthRedirectUri: optional("KROGER_OAUTH_REDIRECT_URI", "http://localhost:3001/kroger/callback"),
+  enableMorningBriefing: optional("ENABLE_MORNING_BRIEFING", "true") === "true",
+  morningBriefingHour: optional("MORNING_BRIEFING_HOUR", "8"),
 } as const;

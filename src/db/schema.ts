@@ -59,6 +59,16 @@ export const productPreferences = sqliteTable("product_preferences", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
+export const reminders = sqliteTable("reminders", {
+  id: text("id").primaryKey(), // ULID
+  message: text("message").notNull(),
+  dueAt: text("due_at").notNull(), // ISO datetime in local TZ
+  createdBy: text("created_by").notNull(), // platformUserId
+  platform: text("platform").notNull(), // "groupme" | "telegram" | etc.
+  fired: integer("fired", { mode: "boolean" }).notNull().default(false),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
 export const conversationHistory = sqliteTable("conversation_history", {
   id: text("id").primaryKey(), // ULID
   userId: text("user_id").notNull(),

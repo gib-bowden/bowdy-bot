@@ -75,6 +75,16 @@ export function ensureSchema(): void {
 
     DROP TABLE IF EXISTS cart_items;
 
+    CREATE TABLE IF NOT EXISTS reminders (
+      id TEXT PRIMARY KEY,
+      message TEXT NOT NULL,
+      due_at TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      fired INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     DROP TABLE IF EXISTS conversation_history;
     CREATE TABLE conversation_history (
       id TEXT PRIMARY KEY,

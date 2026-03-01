@@ -109,7 +109,7 @@ Respond with exactly "YES" or "NO".`;
   }
 }
 
-function splitMessage(text: string): string[] {
+export function splitMessage(text: string): string[] {
   if (text.length <= MAX_MESSAGE_LENGTH) return [text];
 
   const chunks: string[] = [];
@@ -154,7 +154,7 @@ interface GroupMeWebhookPayload {
   user_id: string;
 }
 
-async function sendGroupMeMessage(botId: string, text: string): Promise<void> {
+export async function sendGroupMeMessage(botId: string, text: string): Promise<void> {
   const response = await fetch(GROUPME_API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
