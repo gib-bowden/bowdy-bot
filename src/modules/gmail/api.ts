@@ -32,7 +32,7 @@ export async function listUnreadMessages(
 ): Promise<EmailMessage[]> {
   const gmail = await getGmailClient(email);
 
-  let query = "is:unread in:inbox";
+  let query = "is:unread in:inbox -label:BowdyBot-Triaged";
   if (since) {
     // Gmail search uses YYYY/MM/DD format
     const sinceDate = new Date(since);
@@ -127,13 +127,15 @@ export async function archiveMessages(
   messageIds: string[],
 ): Promise<void> {
   const gmail = await getGmailClient(email);
-  for (const id of messageIds) {
-    await gmail.users.messages.modify({
-      userId: "me",
-      id,
-      requestBody: { removeLabelIds: ["INBOX"] },
-    });
-  }
+  await Promise.all(
+    messageIds.map((id) =>
+      gmail.users.messages.modify({
+        userId: "me",
+        id,
+        requestBody: { removeLabelIds: ["INBOX"] },
+      }),
+    ),
+  );
 }
 
 /**
@@ -144,9 +146,9 @@ export async function trashMessages(
   messageIds: string[],
 ): Promise<void> {
   const gmail = await getGmailClient(email);
-  for (const id of messageIds) {
-    await gmail.users.messages.trash({ userId: "me", id });
-  }
+  await Promise.all(
+    messageIds.map((id) => gmail.users.messages.trash({ userId: "me", id })),
+  );
 }
 
 /**
@@ -257,6 +259,39 @@ export async function createLabel(
     requestBody: { name, labelListVisibility: "labelShow", messageListVisibility: "show" },
   });
   return { id: response.data.id!, name: response.data.name! };
+}
+
+const TRIAGED_LABEL_NAME = "BowdyBot-Triaged";
+const triagedLabelCache = new Map<string, string>();
+
+/**
+ * Get or create the BowdyBot-Triaged label for an account. Cached per account.
+ */
+async function getTriagedLabelId(email: string): Promise<string> {
+  const cached = triagedLabelCache.get(email);
+  if (cached) return cached;
+
+  const labels = await listLabels(email);
+  const existing = labels.find((l) => l.name === TRIAGED_LABEL_NAME);
+  if (existing) {
+    triagedLabelCache.set(email, existing.id);
+    return existing.id;
+  }
+
+  const created = await createLabel(email, TRIAGED_LABEL_NAME);
+  triagedLabelCache.set(email, created.id);
+  return created.id;
+}
+
+/**
+ * Mark messages as triaged by applying the BowdyBot-Triaged label.
+ */
+export async function markAsTriaged(
+  email: string,
+  messageIds: string[],
+): Promise<void> {
+  const labelId = await getTriagedLabelId(email);
+  await Promise.all(messageIds.map((id) => modifyLabels(email, id, [labelId], [])));
 }
 
 /**

@@ -2,7 +2,7 @@ import { eq, desc } from "drizzle-orm";
 import { ulid } from "ulid";
 import { getDb, schema } from "../../db/client.js";
 import { logger } from "../../logger.js";
-import { listUnreadMessages, archiveMessages, sendEmail } from "./api.js";
+import { listUnreadMessages, archiveMessages, sendEmail, markAsTriaged } from "./api.js";
 import { classifyEmails, type ClassifiedEmail } from "./classify.js";
 
 /**
@@ -113,6 +113,14 @@ export async function runTriageForAccount(
         status: autoArchivedSet.has(item.message.id) ? "actioned" : "pending",
       })
       .run();
+  }
+
+  // Mark all scanned messages as triaged so they're excluded from future scans
+  const allMessageIds = classified.map((c) => c.message.id);
+  try {
+    await markAsTriaged(accountEmail, allMessageIds);
+  } catch (err) {
+    logger.error({ err, accountEmail }, "Failed to mark messages as triaged");
   }
 
   logger.info(
