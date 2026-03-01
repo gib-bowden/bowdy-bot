@@ -41,6 +41,12 @@ if (googleOAuthConfigured && config.googleCalendarId) {
   registry.register(calendarModule);
 }
 
+if (googleOAuthConfigured && config.enableEmailTriage && config.emailTriageFamilyAccount) {
+  const { gmailModule } = await import("./modules/gmail/index.js");
+  registry.register(gmailModule);
+  logger.info("Gmail email triage module registered");
+}
+
 // Reminders module — no OAuth dependency, SQLite only
 const { remindersModule } = await import("./modules/reminders/index.js");
 registry.register(remindersModule);
