@@ -9,6 +9,10 @@ export interface Module<T extends ToolInputMap = Record<string, Record<string, u
   executeTool<K extends string & keyof T>(name: K, input: T[K]): Promise<unknown>;
 }
 
+/** Type-erased Module for use in the registry and other collection contexts. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnyModule = Module<any>;
+
 export function assertUnreachable(value: never): never {
   throw new Error(`Unknown tool: ${value}`);
 }

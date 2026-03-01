@@ -228,7 +228,7 @@ export const gmailModule: Module<GmailInputs> = {
       }
 
       case "add_email_rule": {
-        const { match_type, match_value, action, account_email: ruleAccount, label } = input as unknown as AddEmailRuleInput;
+        const { match_type, match_value, action, account_email: ruleAccount, label } = input as AddEmailRuleInput;
         const rule = saveRule({
           accountEmail: ruleAccount ?? null,
           matchType: match_type,
@@ -250,7 +250,7 @@ export const gmailModule: Module<GmailInputs> = {
       }
 
       case "delete_email_rule": {
-        const { rule_id } = input as unknown as DeleteEmailRuleInput;
+        const { rule_id } = input as DeleteEmailRuleInput;
         const deleted = deleteRule(rule_id);
         return {
           success: deleted,

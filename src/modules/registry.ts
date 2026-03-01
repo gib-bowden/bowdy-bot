@@ -1,15 +1,12 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Module } from "./types.js";
+import type { AnyModule } from "./types.js";
 import { logger } from "../logger.js";
 
 export class ModuleRegistry {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private modules: Module<any>[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toolToModule = new Map<string, Module<any>>();
+  private modules: AnyModule[] = [];
+  private toolToModule = new Map<string, AnyModule>();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  register(module: Module<any>): void {
+  register(module: AnyModule): void {
     this.modules.push(module);
     for (const tool of module.tools) {
       this.toolToModule.set(tool.name, module);
