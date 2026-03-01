@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Module } from "../types.js";
+import { assertUnreachable, type Module } from "../types.js";
 import { getTasksClient } from "./client.js";
 
 const taskListCache = new Map<string, string>();
@@ -435,7 +435,7 @@ export const googleTasksModule: Module<GoogleTasksInputs> = {
       case "delete_list":
         return deleteList(input as DeleteListInput);
       default:
-        throw new Error(`Unknown tool: ${name}`);
+        return assertUnreachable(name);
     }
   },
 };

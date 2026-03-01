@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { eq, and } from "drizzle-orm";
 import { ulid } from "ulid";
-import type { Module } from "../types.js";
+import { assertUnreachable, type Module } from "../types.js";
 import { getDb, schema } from "../../db/client.js";
 import { scheduleReminder, cancelScheduledReminder } from "../../cron/reminders.js";
 import { config } from "../../config.js";
@@ -176,7 +176,7 @@ export const remindersModule: Module<RemindersInputs> = {
       case "cancel_reminder":
         return cancelReminder(input as CancelReminderInput);
       default:
-        throw new Error(`Unknown tool: ${name}`);
+        return assertUnreachable(name);
     }
   },
 };

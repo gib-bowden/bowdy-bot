@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Module } from "../types.js";
+import { assertUnreachable, type Module } from "../types.js";
 import { config } from "../../config.js";
 import { runTriageForAccount } from "./triage.js";
 import { listRules, saveRule, deleteRule } from "./rules.js";
@@ -303,7 +303,7 @@ export const gmailModule: Module<GmailInputs> = {
       }
 
       default:
-        throw new Error(`Unknown tool: ${name}`);
+        return assertUnreachable(name);
     }
   },
 };

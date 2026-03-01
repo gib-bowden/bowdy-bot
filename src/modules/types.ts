@@ -8,3 +8,7 @@ export interface Module<T extends ToolInputMap = Record<string, Record<string, u
   tools: Anthropic.Tool[];
   executeTool<K extends string & keyof T>(name: K, input: T[K]): Promise<unknown>;
 }
+
+export function assertUnreachable(value: never): never {
+  throw new Error(`Unknown tool: ${value}`);
+}

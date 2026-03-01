@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Module } from "../types.js";
+import { assertUnreachable, type Module } from "../types.js";
 import { getCalendarClient, getCalendarId } from "./client.js";
 import { config } from "../../config.js";
 
@@ -251,7 +251,7 @@ export const calendarModule: Module<CalendarInputs> = {
       case "delete_event":
         return deleteEvent(input as DeleteEventInput);
       default:
-        throw new Error(`Unknown tool: ${name}`);
+        return assertUnreachable(name);
     }
   },
 };

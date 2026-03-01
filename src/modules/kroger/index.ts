@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Module } from "../types.js";
+import { assertUnreachable, type Module } from "../types.js";
 import { getDefaultAccount, setPreferredStore } from "../../auth/kroger.js";
 import { searchProducts, searchLocations, addToCart } from "./api.js";
 import { getTasksClient } from "../google-tasks/client.js";
@@ -584,7 +584,7 @@ export const krogerModule: Module<KrogerInputs> = {
         };
       }
       default:
-        throw new Error(`Unknown tool: ${name}`);
+        return assertUnreachable(name);
     }
   },
 };
