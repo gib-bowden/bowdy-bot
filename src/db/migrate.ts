@@ -22,16 +22,7 @@ export function ensureSchema(): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    CREATE TABLE IF NOT EXISTS tasks (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      list TEXT NOT NULL DEFAULT 'general',
-      due_date TEXT,
-      completed INTEGER NOT NULL DEFAULT 0,
-      created_by TEXT REFERENCES users(id),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      completed_at TEXT
-    );
+    DROP TABLE IF EXISTS tasks;
 
     CREATE TABLE IF NOT EXISTS google_accounts (
       id TEXT PRIMARY KEY,
@@ -85,8 +76,7 @@ export function ensureSchema(): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    DROP TABLE IF EXISTS conversation_history;
-    CREATE TABLE conversation_history (
+    CREATE TABLE IF NOT EXISTS conversation_history (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       role TEXT NOT NULL,
@@ -136,17 +126,6 @@ export function ensureSchema(): void {
       UNIQUE(match_type, match_value, account_email)
     );
   `);
-
-  // Add columns to existing tables (safe to fail if already exists)
-  const addColumn = (table: string, column: string, type: string) => {
-    try {
-      sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
-    } catch {
-      // Column already exists
-    }
-  };
-
-  addColumn("tasks", "due_date", "TEXT");
 
   sqlite.close();
   logger.info("Schema ensured");

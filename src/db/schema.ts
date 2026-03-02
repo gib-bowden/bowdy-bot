@@ -8,17 +8,6 @@ export const users = sqliteTable("users", {
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
-export const tasks = sqliteTable("tasks", {
-  id: text("id").primaryKey(), // ULID
-  title: text("title").notNull(),
-  list: text("list").notNull().default("general"), // "general", "grocery", etc.
-  dueDate: text("due_date"), // ISO date string, e.g. "2026-02-25"
-  completed: integer("completed", { mode: "boolean" }).notNull().default(false),
-  createdBy: text("created_by").references(() => users.id),
-  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
-  completedAt: text("completed_at"),
-});
-
 export const googleAccounts = sqliteTable("google_accounts", {
   id: text("id").primaryKey(), // ULID
   email: text("email").notNull().unique(),

@@ -2,7 +2,12 @@ import { eq, desc } from "drizzle-orm";
 import { ulid } from "ulid";
 import { getDb, schema } from "../../db/client.js";
 import { logger } from "../../logger.js";
-import { listUnreadMessages, archiveMessages, sendEmail, markAsTriaged } from "./api.js";
+import {
+  listUnreadMessages,
+  archiveMessages,
+  sendEmail,
+  // markAsTriaged,
+} from "./api.js";
 import { classifyEmails, type ClassifiedEmail } from "./classify.js";
 
 /**
@@ -56,10 +61,15 @@ export async function runTriageForAccount(
 
   // Filter out auto-archived emails from the triage summary
   const autoArchivedSet = new Set(autoArchiveIds);
-  const triageItems = classified.filter((c) => !autoArchivedSet.has(c.message.id));
+  const triageItems = classified.filter(
+    (c) => !autoArchivedSet.has(c.message.id),
+  );
 
   if (triageItems.length === 0) {
-    logger.info({ accountEmail }, "All emails auto-handled by rules, no triage email needed");
+    logger.info(
+      { accountEmail },
+      "All emails auto-handled by rules, no triage email needed",
+    );
     // Still save a session for tracking
     const sessionId = ulid();
     db.insert(schema.emailTriageSessions)
@@ -75,7 +85,11 @@ export async function runTriageForAccount(
   }
 
   // Compose triage summary email
-  const htmlBody = composeTriageEmail(triageItems, accountEmail, autoArchiveIds.length);
+  const htmlBody = composeTriageEmail(
+    triageItems,
+    accountEmail,
+    autoArchiveIds.length,
+  );
   const subject = `📬 Email Triage: ${triageItems.length} email${triageItems.length === 1 ? "" : "s"} to review`;
 
   // Send from family account to personal account
@@ -109,19 +123,22 @@ export async function runTriageForAccount(
         category: item.category,
         summary: item.summary,
         suggestedAction: item.suggestedAction,
-        actionTaken: autoArchivedSet.has(item.message.id) ? "auto_archived" : null,
+        actionTaken: autoArchivedSet.has(item.message.id)
+          ? "auto_archived"
+          : null,
         status: autoArchivedSet.has(item.message.id) ? "actioned" : "pending",
       })
       .run();
   }
 
   // Mark all scanned messages as triaged so they're excluded from future scans
-  const allMessageIds = classified.map((c) => c.message.id);
-  try {
-    await markAsTriaged(accountEmail, allMessageIds);
-  } catch (err) {
-    logger.error({ err, accountEmail }, "Failed to mark messages as triaged");
-  }
+  // TODO: Remove after testing
+  // const allMessageIds = classified.map((c) => c.message.id);
+  // try {
+  //   await markAsTriaged(accountEmail, allMessageIds);
+  // } catch (err) {
+  //   logger.error({ err, accountEmail }, "Failed to mark messages as triaged");
+  // }
 
   logger.info(
     {
@@ -140,7 +157,10 @@ export async function runTriageForAccount(
 /**
  * Run triage for all configured accounts.
  */
-export async function runEmailTriage(accounts: string[], familyEmail: string): Promise<void> {
+export async function runEmailTriage(
+  accounts: string[],
+  familyEmail: string,
+): Promise<void> {
   for (const accountEmail of accounts) {
     try {
       await runTriageForAccount(accountEmail, familyEmail);
@@ -157,7 +177,9 @@ function composeTriageEmail(
 ): string {
   const actionNeeded = items.filter((i) => i.category === "action_needed");
   const fyi = items.filter((i) => i.category === "fyi");
-  const recommendArchive = items.filter((i) => i.category === "recommend_archive");
+  const recommendArchive = items.filter(
+    (i) => i.category === "recommend_archive",
+  );
   const unknown = items.filter((i) => i.category === "unknown");
 
   const sections: string[] = [];
