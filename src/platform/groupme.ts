@@ -32,10 +32,7 @@ interface MentionAttachment {
 /**
  * Check if the bot is @mentioned in the GroupMe attachments.
  */
-function isBotMentioned(
-  attachments: unknown[],
-  botUserId: string,
-): boolean {
+function isBotMentioned(attachments: unknown[], botUserId: string): boolean {
   if (!botUserId) return false;
   for (const att of attachments) {
     const a = att as Record<string, unknown>;
@@ -65,12 +62,12 @@ async function classifyMessage(
     conversationContext = `\nRecent group chat messages (oldest first):\n${lines.join("\n")}\n`;
   }
 
-  const prompt = `You are a classifier for a family group chat. Bowdy Bot is an AI assistant that can check grocery lists, the Kroger cart, calendars/schedules, set reminders, search the web, and answer general knowledge questions.
+  const prompt = `You are a classifier for a family group chat. Bowdy Bot is an AI assistant that can check grocery lists, the Kroger cart, calendars/schedules, set reminders, search the web, run email triage/scans, and answer general knowledge questions.
 
 Determine if the following message is something Bowdy Bot should respond to, or if it's just regular conversation between family members.
 
 A message IS for the bot if:
-- It asks about or wants to manage a list, grocery cart, calendar, or schedule (e.g., "what's on the list", "what's in the cart", "what's today look like")
+- It asks about or wants to manage a list, grocery cart, calendar, schedule, or email (e.g., "what's on the list", "what's in the cart", "what's today look like", "run an email triage")
 - It asks a question or makes a request that requires information lookup or tools (recipes, weather, reminders, general knowledge, product search, etc.)
 - It's a follow-up to a recent bot response (check the conversation context)
 - It directly addresses the bot by name or role
@@ -104,7 +101,10 @@ Respond with exactly "YES" or "NO".`;
 
     return result === "YES";
   } catch (err) {
-    logger.error({ err }, "Message classification failed, falling back to ignore");
+    logger.error(
+      { err },
+      "Message classification failed, falling back to ignore",
+    );
     return false;
   }
 }
@@ -154,7 +154,10 @@ interface GroupMeWebhookPayload {
   user_id: string;
 }
 
-export async function sendGroupMeMessage(botId: string, text: string): Promise<void> {
+export async function sendGroupMeMessage(
+  botId: string,
+  text: string,
+): Promise<void> {
   const response = await fetch(GROUPME_API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -199,8 +202,12 @@ export class GroupMePlatform implements Platform {
 
   async start(handler: MessageHandler): Promise<void> {
     let processing = false;
-    const queue: Array<{ senderId: string; senderName: string; text: string; imageUrls?: string[] }> =
-      [];
+    const queue: Array<{
+      senderId: string;
+      senderName: string;
+      text: string;
+      imageUrls?: string[];
+    }> = [];
 
     const processQueue = async () => {
       if (processing) return;
@@ -261,112 +268,114 @@ export class GroupMePlatform implements Platform {
       processing = false;
     };
 
-    this.server = createServer(async (req: HttpRequest, res: ServerResponse) => {
-      if (this.oauthHandler && await this.oauthHandler(req, res)) {
-        return;
-      }
-
-      if (req.method !== "POST") {
-        res.writeHead(405);
-        res.end();
-        return;
-      }
-
-      let body = "";
-      req.on("data", (chunk: Buffer) => {
-        body += chunk.toString();
-      });
-
-      req.on("end", async () => {
-        // Always respond 200 so GroupMe doesn't retry
-        res.writeHead(200, { "Content-Type": "text/plain" });
-        res.end();
-
-        let payload: GroupMeWebhookPayload;
-        try {
-          payload = JSON.parse(body) as GroupMeWebhookPayload;
-        } catch {
-          logger.debug("Received webhook with invalid JSON");
+    this.server = createServer(
+      async (req: HttpRequest, res: ServerResponse) => {
+        if (this.oauthHandler && (await this.oauthHandler(req, res))) {
           return;
         }
 
-        // Ignore bot messages to prevent infinite loops
-        if (payload.sender_type === "bot") {
+        if (req.method !== "POST") {
+          res.writeHead(405);
+          res.end();
           return;
         }
 
-        // Ignore system messages
-        if (payload.system) {
-          return;
-        }
+        let body = "";
+        req.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
 
-        // Extract image URLs from attachments
-        const imageUrls: string[] = [];
-        if (Array.isArray(payload.attachments)) {
-          for (const att of payload.attachments) {
-            const a = att as Record<string, unknown>;
-            if (a.type === "image" && typeof a.url === "string") {
-              imageUrls.push(a.url);
+        req.on("end", async () => {
+          // Always respond 200 so GroupMe doesn't retry
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end();
+
+          let payload: GroupMeWebhookPayload;
+          try {
+            payload = JSON.parse(body) as GroupMeWebhookPayload;
+          } catch {
+            logger.debug("Received webhook with invalid JSON");
+            return;
+          }
+
+          // Ignore bot messages to prevent infinite loops
+          if (payload.sender_type === "bot") {
+            return;
+          }
+
+          // Ignore system messages
+          if (payload.system) {
+            return;
+          }
+
+          // Extract image URLs from attachments
+          const imageUrls: string[] = [];
+          if (Array.isArray(payload.attachments)) {
+            for (const att of payload.attachments) {
+              const a = att as Record<string, unknown>;
+              if (a.type === "image" && typeof a.url === "string") {
+                imageUrls.push(a.url);
+              }
             }
           }
-        }
 
-        if (!payload.text && imageUrls.length === 0) {
-          logger.debug("Received webhook without text or images");
-          return;
-        }
+          if (!payload.text && imageUrls.length === 0) {
+            logger.debug("Received webhook without text or images");
+            return;
+          }
 
-        const rawText = (payload.text ?? "").trim();
+          const rawText = (payload.text ?? "").trim();
 
-        // Always buffer the message for classifier context
-        if (rawText) {
-          this.pushRecentMessage({
-            sender: payload.name,
+          // Always buffer the message for classifier context
+          if (rawText) {
+            this.pushRecentMessage({
+              sender: payload.name,
+              text: rawText,
+              isBot: false,
+            });
+          }
+
+          // Determine if the message is directed at the bot:
+          // 1. Fast path: explicit name mention
+          // 2. @mention in attachments
+          // 3. LLM classifier with conversation context
+          let directed = false;
+
+          if (FAST_TRIGGERS.test(rawText)) {
+            directed = true;
+            logger.debug({ user: payload.name }, "Fast-path trigger matched");
+          } else if (
+            Array.isArray(payload.attachments) &&
+            isBotMentioned(payload.attachments, this.botUserId)
+          ) {
+            directed = true;
+            logger.debug({ user: payload.name }, "Bot @mentioned");
+          } else if (rawText) {
+            directed = await classifyMessage(
+              rawText,
+              payload.name,
+              this.recentMessages.slice(0, -1), // exclude current message (already added)
+            );
+          }
+
+          if (!directed) {
+            logger.debug(
+              { user: payload.name, text: rawText },
+              "Ignoring GroupMe message not directed at bot",
+            );
+            return;
+          }
+
+          queue.push({
+            senderId: payload.sender_id,
+            senderName: payload.name,
             text: rawText,
-            isBot: false,
+            imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
           });
-        }
-
-        // Determine if the message is directed at the bot:
-        // 1. Fast path: explicit name mention
-        // 2. @mention in attachments
-        // 3. LLM classifier with conversation context
-        let directed = false;
-
-        if (FAST_TRIGGERS.test(rawText)) {
-          directed = true;
-          logger.debug({ user: payload.name }, "Fast-path trigger matched");
-        } else if (
-          Array.isArray(payload.attachments) &&
-          isBotMentioned(payload.attachments, this.botUserId)
-        ) {
-          directed = true;
-          logger.debug({ user: payload.name }, "Bot @mentioned");
-        } else if (rawText) {
-          directed = await classifyMessage(
-            rawText,
-            payload.name,
-            this.recentMessages.slice(0, -1), // exclude current message (already added)
-          );
-        }
-
-        if (!directed) {
-          logger.debug(
-            { user: payload.name, text: rawText },
-            "Ignoring GroupMe message not directed at bot",
-          );
-          return;
-        }
-
-        queue.push({
-          senderId: payload.sender_id,
-          senderName: payload.name,
-          text: rawText,
-          imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+          processQueue();
         });
-        processQueue();
-      });
-    });
+      },
+    );
 
     this.server.listen(this.port, () => {
       logger.info(
