@@ -11,7 +11,7 @@ import {
 } from "./api.js";
 import { saveRule } from "./rules.js";
 
-interface ParsedAction {
+export interface ParsedAction {
   itemRef: string; // "1", "4", "4a", etc.
   action: string;
   extraText?: string;
@@ -355,7 +355,7 @@ If the reply doesn't contain any parseable actions, return an empty array [].`,
  * Simple regex-based reply parser for common formats like:
  * "1 archive", "2,3,4 archive", "4a,4c archive", etc.
  */
-function parseSimpleReply(text: string): ParsedAction[] {
+export function parseSimpleReply(text: string): ParsedAction[] {
   const actions: ParsedAction[] = [];
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
 
@@ -377,7 +377,7 @@ function parseSimpleReply(text: string): ParsedAction[] {
 }
 
 /** Parse item references like "1", "4a", "2-5", "4a,4c" into individual refs. */
-function parseItemReferences(str: string): string[] {
+export function parseItemReferences(str: string): string[] {
   const refs: string[] = [];
   const parts = str.split(",").map((s) => s.trim());
 

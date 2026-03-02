@@ -173,7 +173,7 @@ export async function runEmailTriage(
 }
 
 /** A group of emails from the same sender within a category. */
-interface EmailGroup {
+export interface EmailGroup {
   senderEmail: string;
   senderName: string;
   items: ClassifiedEmail[];
@@ -312,7 +312,7 @@ function composeTriageEmail(
 }
 
 /** Group classified emails by normalized sender email address. */
-function groupBySender(items: ClassifiedEmail[]): EmailGroup[] {
+export function groupBySender(items: ClassifiedEmail[]): EmailGroup[] {
   const groups = new Map<string, EmailGroup>();
   const order: string[] = [];
 
@@ -346,13 +346,13 @@ function groupBySender(items: ClassifiedEmail[]): EmailGroup[] {
 }
 
 /** Extract bare email address from "Name <email@example.com>" format. */
-function extractEmailAddress(sender: string): string {
+export function extractEmailAddress(sender: string): string {
   const match = sender.match(/<([^>]+)>/);
   return (match?.[1] ?? sender).toLowerCase().trim();
 }
 
 /** Normalize subject for comparison (strip Re:/Fwd: prefixes, whitespace). */
-function normalizeSubject(subject: string): string {
+export function normalizeSubject(subject: string): string {
   return subject
     .replace(/^(re|fwd?|fw):\s*/gi, "")
     .trim()
