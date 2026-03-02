@@ -12,7 +12,7 @@ import {
 import { saveRule } from "./rules.js";
 
 interface ParsedAction {
-  itemNumber: number;
+  itemRef: string; // "1", "4", "4a", etc.
   action: string;
   extraText?: string;
 }
@@ -62,17 +62,25 @@ export async function processTriageReplies(familyEmail: string): Promise<void> {
         .where(eq(schema.emailTriageItems.sessionId, session.id))
         .all();
 
-      // Filter to only pending items (not already actioned or auto-archived)
-      const pendingItems = items.filter((i) => i.status === "pending");
+      // Build item lookup: either from triageItemMap (new) or index-based (legacy)
+      const triageItemMap: Record<string, string[]> | null = session.triageItemMap
+        ? JSON.parse(session.triageItemMap)
+        : null;
 
-      // Build numbered map (1-indexed, matching triage email order)
-      // Order: action_needed first, then fyi, recommend_archive, unknown
-      const categoryOrder = ["action_needed", "fyi", "recommend_archive", "unknown"];
-      const sortedItems = pendingItems.sort((a, b) => {
-        const aIdx = categoryOrder.indexOf(a.category ?? "unknown");
-        const bIdx = categoryOrder.indexOf(b.category ?? "unknown");
-        return aIdx - bIdx;
-      });
+      // Build msgId → item lookup
+      const itemsByMsgId = new Map(items.map((i) => [i.gmailMessageId, i]));
+
+      // Legacy fallback: build numbered map (1-indexed)
+      let legacySorted: typeof items | null = null;
+      if (!triageItemMap) {
+        const pendingItems = items.filter((i) => i.status === "pending");
+        const categoryOrder = ["action_needed", "fyi", "recommend_archive", "unknown"];
+        legacySorted = pendingItems.sort((a, b) => {
+          const aIdx = categoryOrder.indexOf(a.category ?? "unknown");
+          const bIdx = categoryOrder.indexOf(b.category ?? "unknown");
+          return aIdx - bIdx;
+        });
+      }
 
       const results: string[] = [];
       let archived = 0;
@@ -83,26 +91,54 @@ export async function processTriageReplies(familyEmail: string): Promise<void> {
       let kept = 0;
 
       for (const action of actions) {
-        const item = sortedItems[action.itemNumber - 1];
-        if (!item) {
-          results.push(`#${action.itemNumber}: Item not found`);
+        // Resolve item ref to message IDs
+        let targetMsgIds: string[];
+        if (triageItemMap) {
+          const ids = triageItemMap[action.itemRef];
+          if (!ids || ids.length === 0) {
+            results.push(`#${action.itemRef}: Item not found`);
+            continue;
+          }
+          targetMsgIds = ids;
+        } else {
+          // Legacy: treat itemRef as 1-indexed number
+          const num = parseInt(action.itemRef, 10);
+          const item = legacySorted?.[num - 1];
+          if (!item) {
+            results.push(`#${action.itemRef}: Item not found`);
+            continue;
+          }
+          targetMsgIds = [item.gmailMessageId];
+        }
+
+        // Get the first pending item for context (sender, subject, etc.)
+        const targetItems = targetMsgIds
+          .map((id) => itemsByMsgId.get(id))
+          .filter((i): i is NonNullable<typeof i> => i != null && i.status === "pending");
+
+        if (targetItems.length === 0) {
+          results.push(`#${action.itemRef}: Already actioned or not found`);
           continue;
         }
+
+        const item = targetItems[0]!;
 
         try {
           switch (action.action) {
             case "archive": {
-              await archiveMessages(session.accountEmail, [item.gmailMessageId]);
-              db.update(schema.emailTriageItems)
-                .set({ actionTaken: "archived", status: "actioned" })
-                .where(eq(schema.emailTriageItems.id, item.id))
-                .run();
-              archived++;
+              const msgIds = targetItems.map((i) => i.gmailMessageId);
+              await archiveMessages(session.accountEmail, msgIds);
+              for (const ti of targetItems) {
+                db.update(schema.emailTriageItems)
+                  .set({ actionTaken: "archived", status: "actioned" })
+                  .where(eq(schema.emailTriageItems.id, ti.id))
+                  .run();
+              }
+              archived += targetItems.length;
               break;
             }
 
             case "calendar": {
-              // Create calendar event from email context
               try {
                 const { calendarModule } = await import("../calendar/index.js");
                 const now = new Date();
@@ -113,14 +149,16 @@ export async function processTriageReplies(familyEmail: string): Promise<void> {
                   end: oneHourLater.toISOString(),
                   description: `From: ${item.sender}\n\nCreated from email triage — update the time.`,
                 });
-                db.update(schema.emailTriageItems)
-                  .set({ actionTaken: "calendar_event_created", status: "actioned" })
-                  .where(eq(schema.emailTriageItems.id, item.id))
-                  .run();
+                for (const ti of targetItems) {
+                  db.update(schema.emailTriageItems)
+                    .set({ actionTaken: "calendar_event_created", status: "actioned" })
+                    .where(eq(schema.emailTriageItems.id, ti.id))
+                    .run();
+                }
                 calendared++;
               } catch (err) {
                 logger.error({ err, itemId: item.id }, "Failed to create calendar event");
-                results.push(`#${action.itemNumber}: Calendar creation failed — check email for details`);
+                results.push(`#${action.itemRef}: Calendar creation failed — check email for details`);
               }
               break;
             }
@@ -131,32 +169,40 @@ export async function processTriageReplies(familyEmail: string): Promise<void> {
                 await googleTasksModule.executeTool("add_task", {
                   title: item.subject ?? "Task from email",
                 });
-                db.update(schema.emailTriageItems)
-                  .set({ actionTaken: "task_created", status: "actioned" })
-                  .where(eq(schema.emailTriageItems.id, item.id))
-                  .run();
+                for (const ti of targetItems) {
+                  db.update(schema.emailTriageItems)
+                    .set({ actionTaken: "task_created", status: "actioned" })
+                    .where(eq(schema.emailTriageItems.id, ti.id))
+                    .run();
+                }
                 tasked++;
               } catch (err) {
                 logger.error({ err, itemId: item.id }, "Failed to create task");
-                results.push(`#${action.itemNumber}: Task creation failed`);
+                results.push(`#${action.itemRef}: Task creation failed`);
               }
               break;
             }
 
             case "keep": {
-              db.update(schema.emailTriageItems)
-                .set({ actionTaken: "kept", status: "actioned" })
-                .where(eq(schema.emailTriageItems.id, item.id))
-                .run();
-              kept++;
+              for (const ti of targetItems) {
+                db.update(schema.emailTriageItems)
+                  .set({ actionTaken: "kept", status: "actioned" })
+                  .where(eq(schema.emailTriageItems.id, ti.id))
+                  .run();
+              }
+              kept += targetItems.length;
               break;
             }
 
             case "unsubscribe": {
-              const links = await findUnsubscribeLinks(session.accountEmail, [item.gmailMessageId]);
-              const unsubLinks = links.get(item.gmailMessageId) ?? [];
+              const msgIds = targetItems.map((i) => i.gmailMessageId);
+              const links = await findUnsubscribeLinks(session.accountEmail, msgIds);
+              const allUnsubLinks: string[] = [];
+              for (const msgId of msgIds) {
+                const l = links.get(msgId) ?? [];
+                allUnsubLinks.push(...l);
+              }
 
-              // Create archive rule for the sender's domain
               const senderDomain = extractDomain(item.sender ?? "");
               if (senderDomain) {
                 saveRule({
@@ -167,25 +213,29 @@ export async function processTriageReplies(familyEmail: string): Promise<void> {
                 });
               }
 
-              if (unsubLinks.length > 0) {
+              if (allUnsubLinks.length > 0) {
+                const uniqueLinks = [...new Set(allUnsubLinks)];
                 results.push(
-                  `#${action.itemNumber}: Unsubscribe link${unsubLinks.length > 1 ? "s" : ""}: ${unsubLinks.join(", ")}`,
+                  `#${action.itemRef}: Unsubscribe link${uniqueLinks.length > 1 ? "s" : ""}: ${uniqueLinks.join(", ")}`,
                 );
               } else {
-                results.push(`#${action.itemNumber}: No unsubscribe link found — domain rule created to auto-archive future emails`);
+                results.push(`#${action.itemRef}: No unsubscribe link found — domain rule created to auto-archive future emails`);
               }
 
-              await archiveMessages(session.accountEmail, [item.gmailMessageId]);
-              db.update(schema.emailTriageItems)
-                .set({ actionTaken: "unsubscribed", status: "actioned" })
-                .where(eq(schema.emailTriageItems.id, item.id))
-                .run();
-              unsubscribed++;
+              await archiveMessages(session.accountEmail, msgIds);
+              for (const ti of targetItems) {
+                db.update(schema.emailTriageItems)
+                  .set({ actionTaken: "unsubscribed", status: "actioned" })
+                  .where(eq(schema.emailTriageItems.id, ti.id))
+                  .run();
+              }
+              unsubscribed += targetItems.length;
               break;
             }
 
             case "spam": {
-              await trashMessages(session.accountEmail, [item.gmailMessageId]);
+              const msgIds = targetItems.map((i) => i.gmailMessageId);
+              await trashMessages(session.accountEmail, msgIds);
               const senderDomain = extractDomain(item.sender ?? "");
               if (senderDomain) {
                 saveRule({
@@ -195,20 +245,22 @@ export async function processTriageReplies(familyEmail: string): Promise<void> {
                   action: "archive",
                 });
               }
-              db.update(schema.emailTriageItems)
-                .set({ actionTaken: "trashed", status: "actioned" })
-                .where(eq(schema.emailTriageItems.id, item.id))
-                .run();
-              trashed++;
+              for (const ti of targetItems) {
+                db.update(schema.emailTriageItems)
+                  .set({ actionTaken: "trashed", status: "actioned" })
+                  .where(eq(schema.emailTriageItems.id, ti.id))
+                  .run();
+              }
+              trashed += targetItems.length;
               break;
             }
 
             default:
-              results.push(`#${action.itemNumber}: Unknown action "${action.action}"`);
+              results.push(`#${action.itemRef}: Unknown action "${action.action}"`);
           }
         } catch (err) {
           logger.error({ err, itemId: item.id, action: action.action }, "Failed to execute triage action");
-          results.push(`#${action.itemNumber}: Action "${action.action}" failed`);
+          results.push(`#${action.itemRef}: Action "${action.action}" failed`);
         }
       }
 
@@ -272,6 +324,8 @@ async function parseReplyActions(replyBody: string): Promise<ParsedAction[]> {
         {
           role: "user",
           content: `Parse this email triage reply into actions. The user is responding to a numbered list of emails with actions.
+Items can be plain numbers (e.g. "1", "4") or have letter suffixes for sub-items in a group (e.g. "4a", "4c").
+Using a plain number on a group acts on all items in that group.
 
 Valid actions: archive, calendar, task, keep, unsubscribe, spam
 
@@ -279,7 +333,7 @@ Reply text:
 ${replyBody.slice(0, 2000)}
 
 Respond with ONLY a JSON array:
-[{"itemNumber": 1, "action": "archive"}, {"itemNumber": 2, "action": "calendar"}]
+[{"itemRef": "1", "action": "archive"}, {"itemRef": "4a", "action": "calendar"}]
 
 If the reply doesn't contain any parseable actions, return an empty array [].`,
         },
@@ -299,47 +353,48 @@ If the reply doesn't contain any parseable actions, return an empty array [].`,
 
 /**
  * Simple regex-based reply parser for common formats like:
- * "1 archive", "2,3,4 archive", "1 calendar", etc.
+ * "1 archive", "2,3,4 archive", "4a,4c archive", etc.
  */
 function parseSimpleReply(text: string): ParsedAction[] {
   const actions: ParsedAction[] = [];
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
 
   for (const line of lines) {
-    // Match: "1 archive", "2,3,4 archive", "1-5 archive"
-    const match = line.match(/^([\d,\s-]+)\s+(archive|calendar|task|keep|unsubscribe|spam)$/i);
+    // Match: "1 archive", "2,3,4 archive", "4a,4c archive", "1-5 archive"
+    const match = line.match(/^([\d,\s\-a-z]+)\s+(archive|calendar|task|keep|unsubscribe|spam)$/i);
     if (!match) continue;
 
-    const numbersStr = match[1]!;
+    const refsStr = match[1]!;
     const action = match[2]!.toLowerCase();
 
-    // Parse number ranges: "1,2,3" or "1-5" or "1, 3, 5"
-    const numbers = parseNumberList(numbersStr);
-    for (const num of numbers) {
-      actions.push({ itemNumber: num, action });
+    const refs = parseItemReferences(refsStr);
+    for (const ref of refs) {
+      actions.push({ itemRef: ref, action });
     }
   }
 
   return actions;
 }
 
-function parseNumberList(str: string): number[] {
-  const numbers: number[] = [];
+/** Parse item references like "1", "4a", "2-5", "4a,4c" into individual refs. */
+function parseItemReferences(str: string): string[] {
+  const refs: string[] = [];
   const parts = str.split(",").map((s) => s.trim());
 
   for (const part of parts) {
+    // Range of plain numbers: "2-5"
     const rangeMatch = part.match(/^(\d+)\s*-\s*(\d+)$/);
     if (rangeMatch) {
       const start = parseInt(rangeMatch[1]!, 10);
       const end = parseInt(rangeMatch[2]!, 10);
-      for (let i = start; i <= end; i++) numbers.push(i);
-    } else {
-      const num = parseInt(part, 10);
-      if (!isNaN(num)) numbers.push(num);
+      for (let i = start; i <= end; i++) refs.push(String(i));
+    } else if (/^\d+[a-z]?$/i.test(part)) {
+      // Single ref: "1", "4a", "4b"
+      refs.push(part.toLowerCase());
     }
   }
 
-  return numbers;
+  return refs;
 }
 
 function extractDomain(sender: string): string {

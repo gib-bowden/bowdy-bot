@@ -84,8 +84,8 @@ export async function runTriageForAccount(
     return { sessionId, emailCount: autoArchiveIds.length };
   }
 
-  // Compose triage summary email
-  const htmlBody = composeTriageEmail(
+  // Compose triage summary email (with grouping)
+  const { html: htmlBody, itemMap, displayIndices } = composeTriageEmail(
     triageItems,
     accountEmail,
     autoArchiveIds.length,
@@ -105,6 +105,7 @@ export async function runTriageForAccount(
       triageEmailMessageId: sent.messageId,
       status: "sent",
       emailCount: classified.length,
+      triageItemMap: JSON.stringify(itemMap),
     })
     .run();
 
@@ -121,6 +122,7 @@ export async function runTriageForAccount(
         snippet: item.message.snippet,
         receivedAt: item.message.receivedAt,
         category: item.category,
+        displayIndex: displayIndices.get(item.message.id) ?? null,
         summary: item.summary,
         suggestedAction: item.suggestedAction,
         actionTaken: autoArchivedSet.has(item.message.id)
@@ -170,19 +172,49 @@ export async function runEmailTriage(
   }
 }
 
+/** A group of emails from the same sender within a category. */
+interface EmailGroup {
+  senderEmail: string;
+  senderName: string;
+  items: ClassifiedEmail[];
+  identicalSubjects: boolean;
+}
+
+/** Result of composing the triage email with grouping info. */
+interface TriageEmailResult {
+  html: string;
+  /** Map from display index ("1", "2", "4a", "4b") to gmail message IDs */
+  itemMap: Record<string, string[]>;
+  /** Map from gmail message ID to its display index */
+  displayIndices: Map<string, string>;
+}
+
 function composeTriageEmail(
   items: ClassifiedEmail[],
   accountEmail: string,
   autoArchivedCount: number,
-): string {
-  const actionNeeded = items.filter((i) => i.category === "action_needed");
-  const fyi = items.filter((i) => i.category === "fyi");
-  const recommendArchive = items.filter(
-    (i) => i.category === "recommend_archive",
-  );
-  const unknown = items.filter((i) => i.category === "unknown");
+): TriageEmailResult {
+  const categories: Array<{
+    key: string;
+    label: string;
+    color: string;
+    icon: string;
+    items: ClassifiedEmail[];
+  }> = [
+    { key: "action_needed", label: "Action Needed", color: "#d32f2f", icon: "🔴", items: [] },
+    { key: "fyi", label: "FYI", color: "#1976d2", icon: "🔵", items: [] },
+    { key: "recommend_archive", label: "Recommend Archive", color: "#388e3c", icon: "🟢", items: [] },
+    { key: "unknown", label: "Uncategorized", color: "#666", icon: "⚪", items: [] },
+  ];
+
+  for (const item of items) {
+    const cat = categories.find((c) => c.key === item.category) ?? categories[3]!;
+    cat.items.push(item);
+  }
 
   const sections: string[] = [];
+  const itemMap: Record<string, string[]> = {};
+  const displayIndices = new Map<string, string>();
 
   sections.push(`
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -196,33 +228,64 @@ function composeTriageEmail(
     );
   }
 
-  let itemNumber = 1;
+  let groupNumber = 1;
 
-  if (actionNeeded.length > 0) {
-    sections.push('<h3 style="color: #d32f2f;">🔴 Action Needed</h3>');
-    for (const item of actionNeeded) {
-      sections.push(formatTriageItem(item, itemNumber++));
-    }
-  }
+  for (const cat of categories) {
+    if (cat.items.length === 0) continue;
 
-  if (fyi.length > 0) {
-    sections.push('<h3 style="color: #1976d2;">🔵 FYI</h3>');
-    for (const item of fyi) {
-      sections.push(formatTriageItem(item, itemNumber++));
-    }
-  }
+    sections.push(`<h3 style="color: ${cat.color};">${cat.icon} ${cat.label}</h3>`);
 
-  if (recommendArchive.length > 0) {
-    sections.push('<h3 style="color: #388e3c;">🟢 Recommend Archive</h3>');
-    for (const item of recommendArchive) {
-      sections.push(formatTriageItem(item, itemNumber++));
-    }
-  }
+    const groups = groupBySender(cat.items);
 
-  if (unknown.length > 0) {
-    sections.push('<h3 style="color: #666;">⚪ Uncategorized</h3>');
-    for (const item of unknown) {
-      sections.push(formatTriageItem(item, itemNumber++));
+    for (const group of groups) {
+      if (group.items.length === 1) {
+        // Single item — render as before
+        const item = group.items[0]!;
+        const idx = String(groupNumber);
+        sections.push(formatTriageItem(item, idx));
+        itemMap[idx] = [item.message.id];
+        displayIndices.set(item.message.id, idx);
+      } else if (group.identicalSubjects) {
+        // Multiple emails, same subject — collapsed single line
+        const idx = String(groupNumber);
+        const allIds = group.items.map((i) => i.message.id);
+        sections.push(formatCollapsedGroup(group, idx));
+        itemMap[idx] = allIds;
+        for (const item of group.items) {
+          displayIndices.set(item.message.id, idx);
+        }
+      } else {
+        // Multiple emails, different subjects — sender header with sub-items
+        const baseIdx = groupNumber;
+        const allIds = group.items.map((i) => i.message.id);
+        itemMap[String(baseIdx)] = allIds;
+        const capped = group.items.slice(0, 10);
+        const overflow = group.items.length - capped.length;
+
+        sections.push(formatGroupHeader(group, String(baseIdx)));
+        for (let j = 0; j < capped.length; j++) {
+          const letter = String.fromCharCode(97 + j); // a, b, c, ...
+          const subIdx = `${baseIdx}${letter}`;
+          const item = capped[j]!;
+          sections.push(formatGroupSubItem(item, subIdx));
+          itemMap[subIdx] = [item.message.id];
+          displayIndices.set(item.message.id, subIdx);
+        }
+        if (overflow > 0) {
+          sections.push(
+            `<div style="padding: 2px 0 8px 24px; color: #999; font-size: 0.85em;">...and ${overflow} more</div>`,
+          );
+          // Still map overflow items to the group number
+          for (let j = capped.length; j < group.items.length; j++) {
+            const letter = String.fromCharCode(97 + j);
+            const subIdx = `${baseIdx}${letter}`;
+            const item = group.items[j]!;
+            itemMap[subIdx] = [item.message.id];
+            displayIndices.set(item.message.id, subIdx);
+          }
+        }
+      }
+      groupNumber++;
     }
   }
 
@@ -233,27 +296,110 @@ function composeTriageEmail(
     <pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 0.85em;">1 archive
 2 calendar
 3 task
-4,5,6 archive
+4 archive       (archives entire group)
+4a,4c archive   (archives specific items in group)
 7 keep
 8 unsubscribe
 9 spam</pre>
     <p style="color: #666; font-size: 0.85em;">
-      <strong>Actions:</strong> archive, calendar (create event), task (create todo), keep (leave as-is), unsubscribe, spam (trash + auto-archive rule)
+      <strong>Actions:</strong> archive, calendar (create event), task (create todo), keep (leave as-is), unsubscribe, spam (trash + auto-archive rule)<br>
+      <strong>Groups:</strong> Use the number alone (e.g. "4 archive") to act on all emails in a group, or letter suffixes (e.g. "4a archive") for individual items.
     </p>
     </div>
   `);
 
-  return sections.join("\n");
+  return { html: sections.join("\n"), itemMap, displayIndices };
 }
 
-function formatTriageItem(item: ClassifiedEmail, number: number): string {
+/** Group classified emails by normalized sender email address. */
+function groupBySender(items: ClassifiedEmail[]): EmailGroup[] {
+  const groups = new Map<string, EmailGroup>();
+  const order: string[] = [];
+
+  for (const item of items) {
+    const email = extractEmailAddress(item.message.sender);
+    const existing = groups.get(email);
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      const senderName = item.message.sender.replace(/<[^>]+>/, "").trim();
+      const group: EmailGroup = {
+        senderEmail: email,
+        senderName,
+        items: [item],
+        identicalSubjects: true,
+      };
+      groups.set(email, group);
+      order.push(email);
+    }
+  }
+
+  // Determine if subjects are identical within each group
+  for (const group of groups.values()) {
+    if (group.items.length > 1) {
+      const normalized = group.items.map((i) => normalizeSubject(i.message.subject));
+      group.identicalSubjects = normalized.every((s) => s === normalized[0]);
+    }
+  }
+
+  return order.map((email) => groups.get(email)!);
+}
+
+/** Extract bare email address from "Name <email@example.com>" format. */
+function extractEmailAddress(sender: string): string {
+  const match = sender.match(/<([^>]+)>/);
+  return (match?.[1] ?? sender).toLowerCase().trim();
+}
+
+/** Normalize subject for comparison (strip Re:/Fwd: prefixes, whitespace). */
+function normalizeSubject(subject: string): string {
+  return subject
+    .replace(/^(re|fwd?|fw):\s*/gi, "")
+    .trim()
+    .toLowerCase();
+}
+
+function formatTriageItem(item: ClassifiedEmail, index: string): string {
   const senderName = item.message.sender.replace(/<[^>]+>/, "").trim();
   return `
     <div style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
-      <strong style="color: #333;">${number}.</strong>
+      <strong style="color: #333;">${index}.</strong>
       <strong>${escapeHtml(senderName)}</strong><br>
       <span style="color: #333;">${escapeHtml(item.message.subject)}</span><br>
       <span style="color: #888; font-size: 0.9em;">${escapeHtml(item.summary)}</span>
+    </div>
+  `;
+}
+
+function formatCollapsedGroup(group: EmailGroup, index: string): string {
+  const item = group.items[0]!;
+  return `
+    <div style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+      <strong style="color: #333;">${index}.</strong>
+      <strong>${escapeHtml(group.senderName)}</strong>
+      <span style="background: #e0e0e0; border-radius: 8px; padding: 1px 6px; font-size: 0.8em; color: #555;">${group.items.length} emails</span><br>
+      <span style="color: #333;">${escapeHtml(item.message.subject)}</span><br>
+      <span style="color: #888; font-size: 0.9em;">${escapeHtml(item.summary)}</span>
+    </div>
+  `;
+}
+
+function formatGroupHeader(group: EmailGroup, index: string): string {
+  return `
+    <div style="padding: 8px 0 2px 0;">
+      <strong style="color: #333;">${index}.</strong>
+      <strong>${escapeHtml(group.senderName)}</strong>
+      <span style="background: #e0e0e0; border-radius: 8px; padding: 1px 6px; font-size: 0.8em; color: #555;">${group.items.length} emails</span>
+    </div>
+  `;
+}
+
+function formatGroupSubItem(item: ClassifiedEmail, index: string): string {
+  return `
+    <div style="padding: 2px 0; padding-left: 24px; border-bottom: 1px solid #f8f8f8;">
+      <strong style="color: #555; font-size: 0.9em;">${index}.</strong>
+      <span style="color: #333;">${escapeHtml(item.message.subject)}</span><br>
+      <span style="color: #888; font-size: 0.85em; padding-left: 8px;">${escapeHtml(item.summary)}</span>
     </div>
   `;
 }
