@@ -127,6 +127,19 @@ export function ensureSchema(): void {
     );
   `);
 
+  // Migrations for existing tables
+  const migrations = [
+    `ALTER TABLE email_triage_sessions ADD COLUMN triage_item_map TEXT`,
+    `ALTER TABLE email_triage_items ADD COLUMN display_index TEXT`,
+  ];
+  for (const sql of migrations) {
+    try {
+      sqlite.exec(sql);
+    } catch {
+      // Column already exists — ignore
+    }
+  }
+
   sqlite.close();
   logger.info("Schema ensured");
 }

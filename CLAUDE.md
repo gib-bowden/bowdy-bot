@@ -94,7 +94,7 @@ npx tsc --noEmit        # Type-check
 npm run build           # Production build (tsup)
 npm start               # Run production build
 npm run build && npm start  # Smoke-test production bundle before pushing
-npx vitest run          # Run tests
+npx vitest run          # Run tests (co-located *.test.ts files next to source)
 ```
 
 ## Environment Variables

@@ -73,6 +73,7 @@ export const emailTriageSessions = sqliteTable("email_triage_sessions", {
   triageEmailMessageId: text("triage_email_message_id"),
   status: text("status").notNull().default("pending"), // pending | sent | processed | expired
   emailCount: integer("email_count").notNull().default(0),
+  triageItemMap: text("triage_item_map"), // JSON: {"1": ["msgId"], "2a": ["msgId2"], ...}
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   processedAt: text("processed_at"),
 });
@@ -88,6 +89,7 @@ export const emailTriageItems = sqliteTable("email_triage_items", {
   snippet: text("snippet"),
   receivedAt: text("received_at"),
   category: text("category"), // action_needed | fyi | recommend_archive | unknown
+  displayIndex: text("display_index"), // "1", "4a", "4b", etc.
   summary: text("summary"),
   suggestedAction: text("suggested_action"),
   actionTaken: text("action_taken"),
