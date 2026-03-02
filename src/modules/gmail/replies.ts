@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, and, lt } from "drizzle-orm";
 import { getDb, schema } from "../../db/client.js";
 import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
@@ -29,7 +29,24 @@ export async function processTriageReplies(familyEmail: string): Promise<void> {
 
   if (pendingSessions.length === 0) return;
 
-  for (const session of pendingSessions) {
+  // Expire stale sessions (sent > 48 hours ago) to prevent infinite retries
+  const staleThreshold = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const staleSessions = pendingSessions.filter(
+    (s) => s.createdAt && s.createdAt < staleThreshold,
+  );
+  for (const stale of staleSessions) {
+    logger.warn({ sessionId: stale.id, createdAt: stale.createdAt }, "Expiring stale triage session");
+    db.update(schema.emailTriageSessions)
+      .set({ status: "expired" })
+      .where(eq(schema.emailTriageSessions.id, stale.id))
+      .run();
+  }
+
+  const activeSessions = pendingSessions.filter(
+    (s) => !s.createdAt || s.createdAt >= staleThreshold,
+  );
+
+  for (const session of activeSessions) {
     if (!session.triageEmailThreadId || !session.triageEmailMessageId) continue;
 
     try {
@@ -203,7 +220,17 @@ export async function processTriageReplies(familyEmail: string): Promise<void> {
         "Triage replies processed",
       );
     } catch (err) {
-      logger.error({ err, sessionId: session.id }, "Failed to process triage replies");
+      // If the thread/message was deleted, mark session as expired to stop retrying
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes("not found") || errMsg.includes("Not Found") || errMsg.includes("404")) {
+        logger.warn({ sessionId: session.id }, "Triage thread not found — marking session expired");
+        db.update(schema.emailTriageSessions)
+          .set({ status: "expired" })
+          .where(eq(schema.emailTriageSessions.id, session.id))
+          .run();
+      } else {
+        logger.error({ err, sessionId: session.id }, "Failed to process triage replies");
+      }
     }
   }
 }
