@@ -361,7 +361,7 @@ function parseSimpleReply(text: string): ParsedAction[] {
 
   for (const line of lines) {
     // Match: "1 archive", "2,3,4 archive", "4a,4c archive", "1-5 archive"
-    const match = line.match(/^([\d,\s\-a-z]+)\s+(archive|calendar|task|keep|unsubscribe|spam)$/i);
+    const match = line.match(/^(\d+[a-z]?(?:\s*[,\-]\s*\d+[a-z]?)*)\s+(archive|calendar|task|keep|unsubscribe|spam)$/i);
     if (!match) continue;
 
     const refsStr = match[1]!;

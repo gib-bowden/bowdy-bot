@@ -365,7 +365,7 @@ function formatTriageItem(item: ClassifiedEmail, index: string): string {
     <div style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
       <strong style="color: #333;">${index}.</strong>
       <strong>${escapeHtml(senderName)}</strong><br>
-      <span style="color: #333;">${escapeHtml(item.message.subject)}</span><br>
+      <a href="${gmailLink(item.message.threadId)}" target="_blank" style="color: #333; text-decoration: none;">${escapeHtml(item.message.subject)}</a><br>
       <span style="color: #888; font-size: 0.9em;">${escapeHtml(item.summary)}</span>
     </div>
   `;
@@ -378,7 +378,7 @@ function formatCollapsedGroup(group: EmailGroup, index: string): string {
       <strong style="color: #333;">${index}.</strong>
       <strong>${escapeHtml(group.senderName)}</strong>
       <span style="background: #e0e0e0; border-radius: 8px; padding: 1px 6px; font-size: 0.8em; color: #555;">${group.items.length} emails</span><br>
-      <span style="color: #333;">${escapeHtml(item.message.subject)}</span><br>
+      <a href="${gmailLink(item.message.threadId)}" target="_blank" style="color: #333; text-decoration: none;">${escapeHtml(item.message.subject)}</a><br>
       <span style="color: #888; font-size: 0.9em;">${escapeHtml(item.summary)}</span>
     </div>
   `;
@@ -398,10 +398,14 @@ function formatGroupSubItem(item: ClassifiedEmail, index: string): string {
   return `
     <div style="padding: 2px 0; padding-left: 24px; border-bottom: 1px solid #f8f8f8;">
       <strong style="color: #555; font-size: 0.9em;">${index}.</strong>
-      <span style="color: #333;">${escapeHtml(item.message.subject)}</span><br>
+      <a href="${gmailLink(item.message.threadId)}" target="_blank" style="color: #333; text-decoration: none;">${escapeHtml(item.message.subject)}</a><br>
       <span style="color: #888; font-size: 0.85em; padding-left: 8px;">${escapeHtml(item.summary)}</span>
     </div>
   `;
+}
+
+function gmailLink(threadId: string): string {
+  return `https://mail.google.com/mail/u/0/#inbox/${threadId}`;
 }
 
 function escapeHtml(text: string): string {
