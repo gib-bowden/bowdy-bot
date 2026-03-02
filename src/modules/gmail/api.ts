@@ -40,8 +40,6 @@ export async function listUnreadMessages(
     query += ` after:${formatted}`;
   }
 
-  logger.info({ email, query, since, maxMessages }, "Listing unread messages");
-
   const messages: EmailMessage[] = [];
   let pageToken: string | undefined;
 
@@ -53,11 +51,6 @@ export async function listUnreadMessages(
       maxResults: pageSize,
       pageToken,
     });
-
-    logger.info(
-      { resultCount: response.data.resultSizeEstimate, messageCount: response.data.messages?.length ?? 0 },
-      "Gmail API list response",
-    );
 
     const messageIds = response.data.messages || [];
     pageToken = response.data.nextPageToken ?? undefined;
@@ -93,7 +86,6 @@ export async function listUnreadMessages(
     }
   } while (pageToken && messages.length < maxMessages);
 
-  logger.info({ email, totalMessages: messages.length }, "Finished listing unread messages");
   return messages;
 }
 
@@ -174,7 +166,7 @@ export async function sendEmail(
   const messageParts = [
     `From: ${fromEmail}`,
     `To: ${to}`,
-    `Subject: ${subject}`,
+    `Subject: =?UTF-8?B?${Buffer.from(subject).toString("base64")}?=`,
     "Content-Type: text/html; charset=utf-8",
     "",
     htmlBody,

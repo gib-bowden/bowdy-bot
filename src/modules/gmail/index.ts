@@ -45,7 +45,7 @@ const tools: Anthropic.Tool[] = [
     name: "scan_inbox",
     description:
       "Manually trigger an email triage scan for a specific Gmail account. " +
-      "Scans unread emails, classifies them, and sends a triage summary email from the family account. " +
+      "Scans unread emails, classifies them, and sends a triage summary email FROM the family account TO the scanned account's inbox. " +
       "Use this to run triage outside the normal schedule.",
     input_schema: {
       type: "object" as const,
@@ -175,8 +175,6 @@ export const gmailModule: Module<GmailInputs> = {
           };
         }
 
-        logger.info({ accounts, familyEmail }, "Starting email triage scan");
-
         const results: Array<{
           account: string;
           sessionId: string | null;
@@ -186,9 +184,7 @@ export const gmailModule: Module<GmailInputs> = {
 
         for (const email of accounts) {
           try {
-            logger.info({ account: email }, "Triaging account");
             const result = await runTriageForAccount(email, familyEmail);
-            logger.info({ account: email, result }, "Triage result");
             results.push({
               account: email,
               sessionId: result?.sessionId ?? null,
