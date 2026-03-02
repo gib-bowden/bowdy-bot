@@ -57,4 +57,5 @@ export const config = {
   emailTriageFamilyAccount: process.env["EMAIL_TRIAGE_FAMILY_ACCOUNT"] ?? "",
   emailTriageMorningHour: optional("EMAIL_TRIAGE_MORNING_HOUR", "8"),
   emailTriageEveningHour: optional("EMAIL_TRIAGE_EVENING_HOUR", "18"),
+  publicUrl: process.env["PUBLIC_URL"] ?? "",
 } as const;

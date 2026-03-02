@@ -79,13 +79,21 @@ if (config.platform === "telegram") {
   platform = new ConsolePlatform();
 }
 
-// Start OAuth — mount on platform server if supported, otherwise standalone
+// Start OAuth + triage action handler — mount on platform server if supported, otherwise standalone
 if (googleOAuthConfigured || krogerConfigured) {
   const { createOAuthHandler, createKrogerOAuthHandler, createCombinedHandler, startOAuthServer } = await import("./auth/server.js");
 
   const handlers = [];
   if (googleOAuthConfigured) handlers.push(createOAuthHandler());
   if (krogerConfigured) handlers.push(createKrogerOAuthHandler());
+
+  // Mount triage action handler when email triage + PUBLIC_URL are configured
+  if (config.enableEmailTriage && config.publicUrl) {
+    const { createTriageActionHandler } = await import("./modules/gmail/action-handler.js");
+    handlers.push(createTriageActionHandler());
+    logger.info("Triage action handler mounted");
+  }
+
   const combinedHandler = createCombinedHandler(handlers);
 
   if (platform.setOAuthHandler) {

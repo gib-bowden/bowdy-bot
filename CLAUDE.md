@@ -43,6 +43,14 @@ src/
       cart.ts           # Google Tasks "Kroger Cart" list operations (async)
       preferences.ts    # Product preference DB operations (lookup, save, list, delete)
     calendar/           # Google Calendar module (list, create, delete events)
+    gmail/              # Email triage module (scan, classify, summarize, action)
+      triage.ts         # Triage scan + email composition with action buttons
+      classify.ts       # Email classification via Claude Haiku
+      replies.ts        # Parse email replies into triage actions
+      actions.ts        # Shared action executor (archive, keep, unsubscribe, spam) + HMAC URL signing
+      action-handler.ts # HTTP webhook handler for one-click triage action buttons
+      api.ts            # Gmail API client (list, archive, trash, send, labels)
+      rules.ts          # Email auto-archive rules (domain, sender, subject matching)
     reminders/          # Reminder tools (create, list, cancel) — SQLite + node-schedule
     chat/               # Fallback chat module (no tools)
   cron/
@@ -71,6 +79,7 @@ src/
 - **GroupMe message classification**: Three-tier system — (1) fast-path regex for explicit "bowdy" mentions, (2) @mention detection via GroupMe attachments, (3) Claude Haiku classifier with recent message buffer context. See `src/platform/groupme.ts`.
 - **Product preferences**: Maps generic grocery item names to specific Kroger products (UPC, brand, size). Used by `send_to_kroger_cart` to auto-select familiar items without re-searching.
 - **Kroger cart tracking**: Uses a dedicated "Kroger Cart" Google Tasks list. Tasks have formatted titles (`"Product Name (x2)"`) and JSON metadata notes (`{"item":"eggs","upc":"123","product_id":"456"}`). Cart operations are async and visible in the Google Tasks app.
+- **Triage action buttons**: When `PUBLIC_URL` is set, triage emails include clickable action buttons (Archive, Keep, Unsubscribe) per item. Buttons are `<a>` tags linking to `GET /triage/action?session={id}&item={ref}&action={action}&sig={hmac}`. The webhook handler (`action-handler.ts`) validates the HMAC signature, executes the action via the shared executor (`actions.ts`), and returns an HTML confirmation page. HMAC uses `TOKEN_ENCRYPTION_KEY` as the secret, signing `sessionId:itemRef:action`. Both the webhook and email reply processor (`replies.ts`) use the same `executeTriageAction()` function.
 - **Skills**: Optional. Read from `skills/` directory (one subdirectory per skill with `SKILL.md`). Synced to Anthropic API on startup (best-effort, continues on failure). Enables code execution tool in router.
 - **Proactive features**: Morning briefing (daily cron) and reminders (exact-time scheduling) run as in-process scheduled jobs via `node-schedule`. Both send messages to GroupMe via exported `sendGroupMeMessage()`. The scheduler starts in `src/index.ts` when `GROUPME_BOT_ID` is set.
 - **Reminder recovery**: On startup, `recoverReminders()` queries unfired reminders from SQLite and re-schedules them (or fires immediately if overdue). This handles process restarts gracefully.
@@ -101,6 +110,6 @@ npx vitest run          # Run tests (co-located *.test.ts files next to source)
 
 Required: `ANTHROPIC_API_KEY`
 
-Optional: `PLATFORM`, `TELEGRAM_BOT_TOKEN`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `TWILIO_ALLOWLIST`, `TWILIO_WEBHOOK_PORT`, `GROUPME_BOT_ID`, `GROUPME_BOT_USER_ID` (enables @mention detection), `GROUPME_WEBHOOK_PORT`, `LOG_LEVEL`, `DB_PATH`, `TZ`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`, `GOOGLE_OAUTH_PORT`, `GOOGLE_CALENDAR_ID`, `TOKEN_ENCRYPTION_KEY` (required when Google OAuth or Kroger is enabled; generate with `openssl rand -hex 32`), `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET`, `KROGER_OAUTH_REDIRECT_URI`, `ENABLE_MORNING_BRIEFING` (default `"true"`), `MORNING_BRIEFING_HOUR` (0-23, default `"8"`)
+Optional: `PLATFORM`, `TELEGRAM_BOT_TOKEN`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `TWILIO_ALLOWLIST`, `TWILIO_WEBHOOK_PORT`, `GROUPME_BOT_ID`, `GROUPME_BOT_USER_ID` (enables @mention detection), `GROUPME_WEBHOOK_PORT`, `LOG_LEVEL`, `DB_PATH`, `TZ`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`, `GOOGLE_OAUTH_PORT`, `GOOGLE_CALENDAR_ID`, `TOKEN_ENCRYPTION_KEY` (required when Google OAuth or Kroger is enabled; generate with `openssl rand -hex 32`), `KROGER_CLIENT_ID`, `KROGER_CLIENT_SECRET`, `KROGER_OAUTH_REDIRECT_URI`, `ENABLE_MORNING_BRIEFING` (default `"true"`), `MORNING_BRIEFING_HOUR` (0-23, default `"8"`), `PUBLIC_URL` (e.g. `https://bowdy.example.com` — enables clickable action buttons in triage emails)
 
 See `.env.example` for full list with defaults.

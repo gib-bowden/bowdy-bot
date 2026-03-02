@@ -4,12 +4,9 @@ import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
 import {
   getThreadReplies,
-  archiveMessages,
-  trashMessages,
   sendEmail,
-  findUnsubscribeLinks,
 } from "./api.js";
-import { saveRule } from "./rules.js";
+import { executeTriageAction } from "./actions.js";
 
 export interface ParsedAction {
   itemRef: string; // "1", "4", "4a", etc.
@@ -55,33 +52,6 @@ export async function processTriageReplies(familyEmail: string): Promise<void> {
         continue;
       }
 
-      // Get triage items for this session
-      const items = db
-        .select()
-        .from(schema.emailTriageItems)
-        .where(eq(schema.emailTriageItems.sessionId, session.id))
-        .all();
-
-      // Build item lookup: either from triageItemMap (new) or index-based (legacy)
-      const triageItemMap: Record<string, string[]> | null = session.triageItemMap
-        ? JSON.parse(session.triageItemMap)
-        : null;
-
-      // Build msgId → item lookup
-      const itemsByMsgId = new Map(items.map((i) => [i.gmailMessageId, i]));
-
-      // Legacy fallback: build numbered map (1-indexed)
-      let legacySorted: typeof items | null = null;
-      if (!triageItemMap) {
-        const pendingItems = items.filter((i) => i.status === "pending");
-        const categoryOrder = ["action_needed", "fyi", "recommend_archive", "unknown"];
-        legacySorted = pendingItems.sort((a, b) => {
-          const aIdx = categoryOrder.indexOf(a.category ?? "unknown");
-          const bIdx = categoryOrder.indexOf(b.category ?? "unknown");
-          return aIdx - bIdx;
-        });
-      }
-
       const results: string[] = [];
       let archived = 0;
       let calendared = 0;
@@ -91,176 +61,109 @@ export async function processTriageReplies(familyEmail: string): Promise<void> {
       let kept = 0;
 
       for (const action of actions) {
-        // Resolve item ref to message IDs
-        let targetMsgIds: string[];
-        if (triageItemMap) {
-          const ids = triageItemMap[action.itemRef];
-          if (!ids || ids.length === 0) {
+        // Calendar and task still handled inline (need extra module imports)
+        if (action.action === "calendar" || action.action === "task") {
+          const items = db
+            .select()
+            .from(schema.emailTriageItems)
+            .where(eq(schema.emailTriageItems.sessionId, session.id))
+            .all();
+          const triageItemMap: Record<string, string[]> | null = session.triageItemMap
+            ? JSON.parse(session.triageItemMap)
+            : null;
+          const itemsByMsgId = new Map(items.map((i) => [i.gmailMessageId, i]));
+
+          let targetMsgIds: string[] | undefined;
+          if (triageItemMap) {
+            targetMsgIds = triageItemMap[action.itemRef];
+          } else {
+            const pendingItems = items.filter((i) => i.status === "pending");
+            const categoryOrder = ["action_needed", "fyi", "recommend_archive", "unknown"];
+            const sorted = pendingItems.sort((a, b) => {
+              const aIdx = categoryOrder.indexOf(a.category ?? "unknown");
+              const bIdx = categoryOrder.indexOf(b.category ?? "unknown");
+              return aIdx - bIdx;
+            });
+            const num = parseInt(action.itemRef, 10);
+            const item = sorted[num - 1];
+            targetMsgIds = item ? [item.gmailMessageId] : undefined;
+          }
+
+          if (!targetMsgIds || targetMsgIds.length === 0) {
             results.push(`#${action.itemRef}: Item not found`);
             continue;
           }
-          targetMsgIds = ids;
-        } else {
-          // Legacy: treat itemRef as 1-indexed number
-          const num = parseInt(action.itemRef, 10);
-          const item = legacySorted?.[num - 1];
-          if (!item) {
-            results.push(`#${action.itemRef}: Item not found`);
+
+          const targetItems = targetMsgIds
+            .map((id) => itemsByMsgId.get(id))
+            .filter((i): i is NonNullable<typeof i> => i != null && i.status === "pending");
+
+          if (targetItems.length === 0) {
+            results.push(`#${action.itemRef}: Already actioned or not found`);
             continue;
           }
-          targetMsgIds = [item.gmailMessageId];
-        }
 
-        // Get the first pending item for context (sender, subject, etc.)
-        const targetItems = targetMsgIds
-          .map((id) => itemsByMsgId.get(id))
-          .filter((i): i is NonNullable<typeof i> => i != null && i.status === "pending");
+          const item = targetItems[0]!;
 
-        if (targetItems.length === 0) {
-          results.push(`#${action.itemRef}: Already actioned or not found`);
+          if (action.action === "calendar") {
+            try {
+              const { calendarModule } = await import("../calendar/index.js");
+              const now = new Date();
+              const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
+              await calendarModule.executeTool("create_event", {
+                title: item.subject ?? "Event from email",
+                start: now.toISOString(),
+                end: oneHourLater.toISOString(),
+                description: `From: ${item.sender}\n\nCreated from email triage — update the time.`,
+              });
+              for (const ti of targetItems) {
+                db.update(schema.emailTriageItems)
+                  .set({ actionTaken: "calendar_event_created", status: "actioned" })
+                  .where(eq(schema.emailTriageItems.id, ti.id))
+                  .run();
+              }
+              calendared++;
+            } catch (err) {
+              logger.error({ err, itemId: item.id }, "Failed to create calendar event");
+              results.push(`#${action.itemRef}: Calendar creation failed — check email for details`);
+            }
+          } else {
+            try {
+              const { googleTasksModule } = await import("../google-tasks/index.js");
+              await googleTasksModule.executeTool("add_task", {
+                title: item.subject ?? "Task from email",
+              });
+              for (const ti of targetItems) {
+                db.update(schema.emailTriageItems)
+                  .set({ actionTaken: "task_created", status: "actioned" })
+                  .where(eq(schema.emailTriageItems.id, ti.id))
+                  .run();
+              }
+              tasked++;
+            } catch (err) {
+              logger.error({ err, itemId: item.id }, "Failed to create task");
+              results.push(`#${action.itemRef}: Task creation failed`);
+            }
+          }
           continue;
         }
 
-        const item = targetItems[0]!;
-
-        try {
+        // All other actions use the shared executor
+        const result = await executeTriageAction(session.id, session.accountEmail, action.itemRef, action.action);
+        if (!result.success) {
+          results.push(`#${action.itemRef}: ${result.message}`);
+        } else if (!result.alreadyHandled) {
           switch (action.action) {
-            case "archive": {
-              const msgIds = targetItems.map((i) => i.gmailMessageId);
-              await archiveMessages(session.accountEmail, msgIds);
-              for (const ti of targetItems) {
-                db.update(schema.emailTriageItems)
-                  .set({ actionTaken: "archived", status: "actioned" })
-                  .where(eq(schema.emailTriageItems.id, ti.id))
-                  .run();
-              }
-              archived += targetItems.length;
-              break;
-            }
-
-            case "calendar": {
-              try {
-                const { calendarModule } = await import("../calendar/index.js");
-                const now = new Date();
-                const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
-                await calendarModule.executeTool("create_event", {
-                  title: item.subject ?? "Event from email",
-                  start: now.toISOString(),
-                  end: oneHourLater.toISOString(),
-                  description: `From: ${item.sender}\n\nCreated from email triage — update the time.`,
-                });
-                for (const ti of targetItems) {
-                  db.update(schema.emailTriageItems)
-                    .set({ actionTaken: "calendar_event_created", status: "actioned" })
-                    .where(eq(schema.emailTriageItems.id, ti.id))
-                    .run();
-                }
-                calendared++;
-              } catch (err) {
-                logger.error({ err, itemId: item.id }, "Failed to create calendar event");
-                results.push(`#${action.itemRef}: Calendar creation failed — check email for details`);
-              }
-              break;
-            }
-
-            case "task": {
-              try {
-                const { googleTasksModule } = await import("../google-tasks/index.js");
-                await googleTasksModule.executeTool("add_task", {
-                  title: item.subject ?? "Task from email",
-                });
-                for (const ti of targetItems) {
-                  db.update(schema.emailTriageItems)
-                    .set({ actionTaken: "task_created", status: "actioned" })
-                    .where(eq(schema.emailTriageItems.id, ti.id))
-                    .run();
-                }
-                tasked++;
-              } catch (err) {
-                logger.error({ err, itemId: item.id }, "Failed to create task");
-                results.push(`#${action.itemRef}: Task creation failed`);
-              }
-              break;
-            }
-
-            case "keep": {
-              for (const ti of targetItems) {
-                db.update(schema.emailTriageItems)
-                  .set({ actionTaken: "kept", status: "actioned" })
-                  .where(eq(schema.emailTriageItems.id, ti.id))
-                  .run();
-              }
-              kept += targetItems.length;
-              break;
-            }
-
-            case "unsubscribe": {
-              const msgIds = targetItems.map((i) => i.gmailMessageId);
-              const links = await findUnsubscribeLinks(session.accountEmail, msgIds);
-              const allUnsubLinks: string[] = [];
-              for (const msgId of msgIds) {
-                const l = links.get(msgId) ?? [];
-                allUnsubLinks.push(...l);
-              }
-
-              const senderDomain = extractDomain(item.sender ?? "");
-              if (senderDomain) {
-                saveRule({
-                  accountEmail: session.accountEmail,
-                  matchType: "domain",
-                  matchValue: senderDomain,
-                  action: "archive",
-                });
-              }
-
-              if (allUnsubLinks.length > 0) {
-                const uniqueLinks = [...new Set(allUnsubLinks)];
-                results.push(
-                  `#${action.itemRef}: Unsubscribe link${uniqueLinks.length > 1 ? "s" : ""}: ${uniqueLinks.join(", ")}`,
-                );
-              } else {
-                results.push(`#${action.itemRef}: No unsubscribe link found — domain rule created to auto-archive future emails`);
-              }
-
-              await archiveMessages(session.accountEmail, msgIds);
-              for (const ti of targetItems) {
-                db.update(schema.emailTriageItems)
-                  .set({ actionTaken: "unsubscribed", status: "actioned" })
-                  .where(eq(schema.emailTriageItems.id, ti.id))
-                  .run();
-              }
-              unsubscribed += targetItems.length;
-              break;
-            }
-
-            case "spam": {
-              const msgIds = targetItems.map((i) => i.gmailMessageId);
-              await trashMessages(session.accountEmail, msgIds);
-              const senderDomain = extractDomain(item.sender ?? "");
-              if (senderDomain) {
-                saveRule({
-                  accountEmail: session.accountEmail,
-                  matchType: "domain",
-                  matchValue: senderDomain,
-                  action: "archive",
-                });
-              }
-              for (const ti of targetItems) {
-                db.update(schema.emailTriageItems)
-                  .set({ actionTaken: "trashed", status: "actioned" })
-                  .where(eq(schema.emailTriageItems.id, ti.id))
-                  .run();
-              }
-              trashed += targetItems.length;
-              break;
-            }
-
-            default:
-              results.push(`#${action.itemRef}: Unknown action "${action.action}"`);
+            case "archive": archived++; break;
+            case "keep": kept++; break;
+            case "unsubscribe": unsubscribed++; break;
+            case "spam": trashed++; break;
           }
-        } catch (err) {
-          logger.error({ err, itemId: item.id, action: action.action }, "Failed to execute triage action");
-          results.push(`#${action.itemRef}: Action "${action.action}" failed`);
+          if (result.message.includes("Unsubscribe link:")) {
+            results.push(`#${action.itemRef}: ${result.message}`);
+          }
+        } else {
+          results.push(`#${action.itemRef}: ${result.message}`);
         }
       }
 
@@ -397,8 +300,3 @@ export function parseItemReferences(str: string): string[] {
   return refs;
 }
 
-function extractDomain(sender: string): string {
-  const emailMatch = sender.match(/<([^>]+)>/) ?? [null, sender];
-  const emailAddr = emailMatch[1] ?? sender;
-  return emailAddr.split("@")[1]?.toLowerCase() ?? "";
-}
