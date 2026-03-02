@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { assertUnreachable, type Module } from "../types.js";
 import { config } from "../../config.js";
+import { logger } from "../../logger.js";
 import { runTriageForAccount } from "./triage.js";
 import { listRules, saveRule, deleteRule } from "./rules.js";
 import { getDb, schema } from "../../db/client.js";
@@ -174,37 +175,46 @@ export const gmailModule: Module<GmailInputs> = {
           };
         }
 
+        logger.info({ accounts, familyEmail }, "Starting email triage scan");
+
         const results: Array<{
           account: string;
           sessionId: string | null;
           emailCount: number;
+          error?: string;
         }> = [];
 
         for (const email of accounts) {
           try {
+            logger.info({ account: email }, "Triaging account");
             const result = await runTriageForAccount(email, familyEmail);
+            logger.info({ account: email, result }, "Triage result");
             results.push({
               account: email,
               sessionId: result?.sessionId ?? null,
               emailCount: result?.emailCount ?? 0,
             });
           } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            logger.error({ err, account: email }, "Email triage failed for account");
             results.push({
               account: email,
               sessionId: null,
               emailCount: 0,
+              error: message,
             });
           }
         }
 
+        const hasErrors = results.some((r) => r.error);
         return {
-          success: true,
+          success: !hasErrors,
           results,
           summary: results
-            .map(
-              (r) =>
-                `${r.account}: ${r.emailCount > 0 ? `${r.emailCount} emails triaged` : "no new emails"}`,
-            )
+            .map((r) => {
+              if (r.error) return `${r.account}: ERROR — ${r.error}`;
+              return `${r.account}: ${r.emailCount > 0 ? `${r.emailCount} emails triaged` : "no new emails"}`;
+            })
             .join("; "),
         };
       }
