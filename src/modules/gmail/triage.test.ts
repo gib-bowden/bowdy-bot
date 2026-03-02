@@ -1,4 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("../../config.js", () => ({ config: {} }));
+vi.mock("../../ai/client.js", () => ({ getClient: vi.fn() }));
+vi.mock("../../db/client.js", () => ({ getDb: vi.fn(), schema: {} }));
+vi.mock("../../logger.js", () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
 import { extractEmailAddress, normalizeSubject, groupBySender } from "./triage.js";
 import type { ClassifiedEmail } from "./classify.js";
 
