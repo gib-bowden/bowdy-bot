@@ -307,22 +307,6 @@ function composeTriageEmail(
   }
 
   sections.push(`
-    <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-    <h3>How to respond</h3>
-    ${buttonCtx ? `<p style="color: #666; font-size: 0.9em;">Click the action buttons above for quick actions, or reply for advanced actions (calendar, task, bulk operations).</p>` : ""}
-    <p style="color: #666; font-size: 0.9em;">Reply with item numbers and actions, e.g.:</p>
-    <pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 0.85em;">1 archive
-2 calendar
-3 task
-4 archive       (archives entire group)
-4a,4c archive   (archives specific items in group)
-7 keep
-8 unsubscribe
-9 spam</pre>
-    <p style="color: #666; font-size: 0.85em;">
-      <strong>Actions:</strong> archive, calendar (create event), task (create todo), keep (leave as-is), unsubscribe, spam (trash + auto-archive rule)<br>
-      <strong>Groups:</strong> Use the number alone (e.g. "4 archive") to act on all emails in a group, or letter suffixes (e.g. "4a archive") for individual items.
-    </p>
     </div>
   `);
 

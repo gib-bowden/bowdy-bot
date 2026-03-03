@@ -1,18 +1,9 @@
 ---
-name: weekly-planning
-description: Weekly planning workflow — review the upcoming week's calendar, identify open days, surface pending tasks, and help the family plan ahead
+name: planning-week
+description: Reviews the upcoming week's calendar, identifies open days, surfaces pending tasks, and suggests a plan. Use when the user asks to "plan my week", "what does this week look like", "weekly planning", "what's coming up this week", or "Sunday planning".
 ---
 
 # Weekly Planning Skill
-
-## When to Trigger
-
-Activate this workflow when the user asks for:
-- "plan my week"
-- "what does this week look like"
-- "weekly planning"
-- "what's coming up this week"
-- "Sunday planning" / "prep for the week"
 
 ## Planning Structure
 

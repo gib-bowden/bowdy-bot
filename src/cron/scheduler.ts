@@ -29,17 +29,9 @@ export function startScheduler(ctx: SchedulerContext): void {
       runScheduledTriage();
     };
 
-    const runReplies = async () => {
-      const { runScheduledReplyProcessing } = await import("./email-triage.js");
-      runScheduledReplyProcessing();
-    };
-
     // Triage scans at morning + evening
     schedule.scheduleJob({ hour: morningHour, minute: 0, tz: ctx.timezone }, runTriage);
     schedule.scheduleJob({ hour: eveningHour, minute: 0, tz: ctx.timezone }, runTriage);
-
-    // Reply processing every 30 min between 7am-10pm
-    schedule.scheduleJob("0,30 7-22 * * *", { tz: ctx.timezone }, runReplies);
 
     logger.info(
       { morningHour, eveningHour, timezone: ctx.timezone },

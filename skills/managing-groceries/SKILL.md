@@ -1,6 +1,6 @@
 ---
-name: grocery
-description: Manage the family grocery list (Google Tasks) with Kroger product search and cart sync
+name: managing-groceries
+description: Manages the family grocery list via Google Tasks with Kroger product search and cart sync. Use when the user asks to add grocery items, view the shopping list, search for products, send groceries to Kroger, or mentions recipes needing ingredients.
 ---
 
 # Grocery Shopping Workflow

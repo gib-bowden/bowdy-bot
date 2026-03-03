@@ -1,6 +1,6 @@
 ---
-name: calendar
-description: Patterns for managing Google Calendar events — conflict checking, timezone handling, natural date interpretation, and event conventions
+name: managing-calendar
+description: Manages Google Calendar events with conflict checking, timezone handling, and natural date interpretation. Use when the user asks to create, schedule, or check calendar events, or mentions appointments, meetings, or "what's on my calendar".
 ---
 
 # Calendar Management Skill

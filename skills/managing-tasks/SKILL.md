@@ -1,6 +1,6 @@
 ---
-name: tasks
-description: Patterns for managing tasks and grocery lists — organization, completion workflows, categorization, and cleanup
+name: managing-tasks
+description: Manages task and grocery lists including organization, completion, deletion, and bulk operations. Use when the user asks to add, complete, remove, or view tasks and todos, or says things like "add to my list", "what's left", or "clear the list".
 ---
 
 # Task & Grocery List Management Skill

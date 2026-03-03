@@ -1,18 +1,9 @@
 ---
-name: daily-briefing
-description: Morning briefing workflow — compile today's events, pending tasks, and upcoming deadlines into a concise summary
+name: compiling-daily-briefing
+description: Compiles today's calendar events, pending tasks, and grocery status into a concise morning summary. Use when the user asks for a "morning briefing", "what's on today", "daily update", "what do I have going on", or "brief me".
 ---
 
 # Daily Briefing Skill
-
-## When to Trigger
-
-Activate this workflow when the user asks for:
-- "morning briefing"
-- "what's on today"
-- "daily update"
-- "what do I have going on"
-- "brief me"
 
 ## Briefing Structure
 

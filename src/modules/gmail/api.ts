@@ -191,49 +191,6 @@ export async function sendEmail(
 }
 
 /**
- * Get new replies in a thread after a specific message.
- */
-export async function getThreadReplies(
-  email: string,
-  threadId: string,
-  afterMessageId: string,
-): Promise<EmailContent[]> {
-  const gmail = await getGmailClient(email);
-  const response = await gmail.users.threads.get({
-    userId: "me",
-    id: threadId,
-    format: "full",
-  });
-
-  const messages = response.data.messages || [];
-  const replies: EmailContent[] = [];
-  let foundAfter = false;
-
-  for (const msg of messages) {
-    if (msg.id === afterMessageId) {
-      foundAfter = true;
-      continue;
-    }
-    if (!foundAfter || !msg.id) continue;
-
-    const headers = msg.payload?.headers || [];
-    const getHeader = (name: string) =>
-      headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? "";
-
-    replies.push({
-      id: msg.id,
-      threadId: msg.threadId!,
-      subject: getHeader("Subject"),
-      sender: getHeader("From"),
-      body: extractTextBody(msg.payload),
-      receivedAt: getHeader("Date"),
-    });
-  }
-
-  return replies;
-}
-
-/**
  * List all labels for an account.
  */
 export async function listLabels(
