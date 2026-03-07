@@ -47,6 +47,13 @@ if (googleOAuthConfigured && config.enableEmailTriage && config.emailTriageFamil
   logger.info("Gmail email triage module registered");
 }
 
+// Browser module — Playwright-based web automation
+if (process.env["ENABLE_BROWSER"] === "true") {
+  const { browserModule } = await import("./modules/browser/index.js");
+  registry.register(browserModule);
+  logger.info("Browser automation module registered");
+}
+
 // Reminders module — no OAuth dependency, SQLite only
 const { remindersModule } = await import("./modules/reminders/index.js");
 registry.register(remindersModule);
