@@ -20,7 +20,7 @@ const tools: Anthropic.Tool[] = [
   {
     name: "browser_task",
     description:
-      "Open a real browser to interact with a website — click buttons, fill forms, navigate pages. Use this instead of web_search when the task requires INTERACTING with a site (booking appointments, filling out forms, signing up, checking availability on a booking page, adding items to a cart, etc.). Do NOT use web_search for these tasks — it can only read search results, not interact with websites.",
+      "Open a real browser to interact with a website — click buttons, fill forms, navigate pages. Use this when the task requires INTERACTING with a site: booking appointments, filling out forms, signing up, checking availability on a booking page, adding items to a cart, etc.",
     input_schema: {
       type: "object" as const,
       properties: {

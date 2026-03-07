@@ -89,7 +89,12 @@ export async function executeAction(
 
       case "click":
         if (action.selector) {
-          await page.click(action.selector, { timeout: 5000 });
+          try {
+            await page.click(action.selector, { timeout: 5000 });
+          } catch {
+            // Retry with force if an overlay/navbar intercepts the click
+            await page.click(action.selector, { force: true, timeout: 5000 });
+          }
         } else if (action.x !== undefined && action.y !== undefined) {
           await page.mouse.click(action.x, action.y);
         } else {

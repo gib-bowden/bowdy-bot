@@ -44,6 +44,7 @@ Rules:
 - When the task is complete, respond with [DONE] followed by a summary of what was accomplished
 - If you need information from the user to proceed, respond with [NEED_INPUT] followed by your question
 - Prefer CSS selectors for clicking/typing when possible; use x/y coordinates as a fallback
+- If an action fails, try a different approach — use x/y coordinates, scroll the page, or try a different selector
 - After each action you'll receive a new screenshot showing the result`;
 
 function buildSystemPrompt(goal: string): string {

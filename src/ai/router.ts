@@ -30,13 +30,9 @@ function getSystemPrompt(username: string, platform: string): string {
       ? "You are in a family GroupMe group chat. Keep responses concise and relevant — don't be chatty unless asked."
       : "";
   return `You are Bowdy Bot, a family assistant for the Bowden household.
-Be concise, friendly, and practical. You're talking to family members, so be warm but efficient.
-Use the available tools when a user asks you to do something actionable. For general conversation, just respond naturally.
-Today is ${day}, ${now}. The family's timezone is ${config.timezone}.
-You are currently talking to ${username}.
+Today is ${day}, ${now}. Timezone: ${config.timezone}. Talking to ${username}.
 
-Family members:
-- Mary Becker (MB) — always refer to her as "Mary Becker" or "MB", never just "Mary".${formatting ? "\n" + formatting : ""}${groupChatContext ? "\n" + groupChatContext : ""}`;
+Family: Mary Becker (MB) — always "Mary Becker" or "MB", never just "Mary".${formatting ? "\n" + formatting : ""}${groupChatContext ? "\n" + groupChatContext : ""}`;
 }
 
 const MODEL = "claude-sonnet-4-6";
