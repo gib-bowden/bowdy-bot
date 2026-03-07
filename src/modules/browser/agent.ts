@@ -2,11 +2,11 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
 import { getPage } from "./session.js";
-import { executeAction, type BrowserAction } from "./actions.js";
+import { executeAction, validateUrl, type BrowserAction, type ActionResult } from "./actions.js";
 
 const MAX_ITERATIONS = 20;
 const MAX_SCREENSHOTS_IN_HISTORY = 3;
-const MODEL = "claude-haiku-4-5-20251001";
+const MODEL = "claude-sonnet-4-6";
 
 export type BrowserTaskResult =
   | { status: "done"; summary: string }
@@ -14,9 +14,14 @@ export type BrowserTaskResult =
   | { status: "error"; error: string }
   | { status: "max_iterations"; summary: string };
 
-// Conversation state preserved between browser_task and browser_task_continue
+// Session state — single-session only, with busy lock
 let conversationMessages: Anthropic.MessageParam[] = [];
 let currentGoal: string = "";
+let busy = false;
+
+export function isBrowserBusy(): boolean {
+  return busy;
+}
 
 const SYSTEM_PROMPT = `You control a browser to accomplish tasks. You can see the page via screenshots.
 
@@ -46,7 +51,6 @@ function buildSystemPrompt(goal: string): string {
 }
 
 function parseAction(text: string): BrowserAction | null {
-  // Extract JSON from a code block or raw JSON
   const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   const jsonStr = codeBlockMatch ? codeBlockMatch[1]! : null;
 
@@ -65,8 +69,11 @@ function parseAction(text: string): BrowserAction | null {
   return null;
 }
 
+function isActionResult(result: unknown): result is ActionResult {
+  return typeof result === "object" && result !== null && "screenshot" in result;
+}
+
 function trimScreenshotHistory(messages: Anthropic.MessageParam[]): void {
-  // Count screenshots from the end, strip older ones
   let screenshotCount = 0;
 
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -80,7 +87,6 @@ function trimScreenshotHistory(messages: Anthropic.MessageParam[]): void {
       if (block.type === "image") {
         screenshotCount++;
         if (screenshotCount > MAX_SCREENSHOTS_IN_HISTORY) {
-          // Replace old screenshot with a text placeholder
           (msg.content as Anthropic.ContentBlockParam[])[j] = {
             type: "text",
             text: "[previous screenshot — see latest]",
@@ -112,10 +118,8 @@ async function runLoop(): Promise<BrowserTaskResult> {
       .map((b) => b.text)
       .join("\n");
 
-    // Add assistant response to history
     conversationMessages.push({ role: "assistant", content: assistantText });
 
-    // Check for completion signals
     if (assistantText.includes("[DONE]")) {
       const summary = assistantText.split("[DONE]").pop()?.trim() || "Task completed";
       return { status: "done", summary };
@@ -130,10 +134,8 @@ async function runLoop(): Promise<BrowserTaskResult> {
       };
     }
 
-    // Parse and execute action
     const action = parseAction(assistantText);
     if (!action) {
-      // Haiku didn't produce a valid action — ask it to try again
       conversationMessages.push({
         role: "user",
         content: [{ type: "text", text: "I couldn't parse an action from your response. Please respond with a valid JSON action block." }],
@@ -144,8 +146,7 @@ async function runLoop(): Promise<BrowserTaskResult> {
     logger.debug({ action: action.action }, "Executing browser action");
     const result = await executeAction(page, action);
 
-    if ("error" in result && !("screenshot" in result)) {
-      // Fatal error — no screenshot possible
+    if (!isActionResult(result)) {
       conversationMessages.push({
         role: "user",
         content: [{ type: "text", text: `Action failed: ${result.error}` }],
@@ -153,19 +154,18 @@ async function runLoop(): Promise<BrowserTaskResult> {
       continue;
     }
 
-    // Send screenshot back to Haiku
     const userContent: Anthropic.ContentBlockParam[] = [
       {
         type: "image",
         source: {
           type: "base64",
           media_type: "image/jpeg",
-          data: (result as { screenshot: Buffer }).screenshot.toString("base64"),
+          data: result.screenshot.toString("base64"),
         },
       },
       {
         type: "text",
-        text: `Page: ${(result as { metadata: { url: string; title: string } }).metadata.url} — ${(result as { metadata: { url: string; title: string } }).metadata.title}`,
+        text: `Page: ${result.metadata.url} — ${result.metadata.title}`,
       },
     ];
 
@@ -179,14 +179,23 @@ async function runLoop(): Promise<BrowserTaskResult> {
 }
 
 export async function startBrowserTask(url: string, goal: string): Promise<BrowserTaskResult> {
-  // Reset conversation state
+  if (busy) {
+    return { status: "error", error: "A browser task is already in progress. Wait for it to finish or ask the user to try again later." };
+  }
+
+  // Validate URL before starting
+  const urlError = validateUrl(url);
+  if (urlError) {
+    return { status: "error", error: urlError };
+  }
+
+  busy = true;
   conversationMessages = [];
   currentGoal = goal;
 
   const page = await getPage();
 
   try {
-    // Navigate to initial URL and take screenshot
     await page.goto(url, { waitUntil: "load", timeout: 15000 });
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -210,8 +219,13 @@ export async function startBrowserTask(url: string, goal: string): Promise<Brows
       ],
     });
 
-    return await runLoop();
+    const result = await runLoop();
+    if (result.status !== "needs_input") {
+      busy = false;
+    }
+    return result;
   } catch (err) {
+    busy = false;
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err: message }, "Browser task failed");
     return { status: "error", error: message };
@@ -223,15 +237,19 @@ export async function continueBrowserTask(userResponse: string): Promise<Browser
     return { status: "error", error: "No active browser session to continue. Start a new browser_task first." };
   }
 
-  // Add user's response and tell Haiku to continue
   conversationMessages.push({
     role: "user",
     content: [{ type: "text", text: `User responded: ${userResponse}\n\nPlease continue with the task.` }],
   });
 
   try {
-    return await runLoop();
+    const result = await runLoop();
+    if (result.status !== "needs_input") {
+      busy = false;
+    }
+    return result;
   } catch (err) {
+    busy = false;
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err: message }, "Browser task continue failed");
     return { status: "error", error: message };

@@ -14,6 +14,9 @@ const SPLIT_DELAY_MS = 500;
 const GROUPME_API_URL = "https://api.groupme.com/v3/bots/post";
 const MAX_RECENT_MESSAGES = 10;
 
+/** Tools that take a long time — send an acknowledgment before processing */
+const LONG_RUNNING_PATTERNS = /\b(book|appointment|schedule|sign.?up|register|browse|website|check.*(site|page|website)|fill.*(form|out)|browser|triage|scan.*(email|inbox))\b/i;
+
 /** Fast-path: explicit bot name mention skips the classifier */
 const FAST_TRIGGERS = /\b(bowdy|bowdey|bowdy bot|bowdey bot)\b/i;
 
@@ -231,6 +234,13 @@ export class GroupMePlatform implements Platform {
         );
 
         try {
+          // Send acknowledgment for likely long-running tasks
+          if (LONG_RUNNING_PATTERNS.test(item.text)) {
+            await sendGroupMeMessage(this.botId, "On it...").catch((err) =>
+              logger.warn({ err }, "Failed to send acknowledgment"),
+            );
+          }
+
           const responseText = await handler(message);
           const chunks = splitMessage(responseText);
           for (let i = 0; i < chunks.length; i++) {

@@ -50,20 +50,18 @@ export async function closeBrowser(): Promise<void> {
 }
 
 // Cleanup on process exit
-function cleanup(): void {
+process.on("exit", () => {
   if (browser) {
     browser.close().catch(() => {});
     browser = null;
     page = null;
   }
+});
+
+async function shutdownBrowser(): Promise<void> {
+  await closeBrowser();
+  process.exit(0);
 }
 
-process.on("exit", cleanup);
-process.on("SIGTERM", () => {
-  cleanup();
-  process.exit(0);
-});
-process.on("SIGINT", () => {
-  cleanup();
-  process.exit(0);
-});
+process.on("SIGTERM", () => { shutdownBrowser(); });
+process.on("SIGINT", () => { shutdownBrowser(); });
