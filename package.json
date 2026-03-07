@@ -11,6 +11,7 @@
     "build": "tsup src/index.ts --format esm --dts --external playwright",
     "start": "node dist/index.js",
     "test": "vitest run",
+    "eval": "vitest run --config vitest.eval.config.ts",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"

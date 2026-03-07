@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.ts"],
-    exclude: ["src/**/eval/eval.test.ts"],
+    include: ["src/**/eval/eval.test.ts"],
+    testTimeout: 60000,
   },
 });

@@ -3,10 +3,12 @@ import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
 import { getPage } from "./session.js";
 import { executeAction, validateUrl, type BrowserAction, type ActionResult } from "./actions.js";
+import { recordTurn } from "./eval/capture.js";
 
 const MAX_ITERATIONS = 20;
 const MAX_SCREENSHOTS_IN_HISTORY = 3;
-const MODEL = "claude-sonnet-4-6";
+export const DEFAULT_BROWSER_MODEL = "claude-sonnet-4-6";
+const MODEL = process.env["EVAL_MODEL"] || DEFAULT_BROWSER_MODEL;
 
 export type BrowserTaskResult =
   | { status: "done"; summary: string }
@@ -23,7 +25,7 @@ export function isBrowserBusy(): boolean {
   return busy;
 }
 
-const SYSTEM_PROMPT = `You control a browser to accomplish tasks. You can see the page via screenshots.
+export const SYSTEM_PROMPT = `You control a browser to accomplish tasks. You can see the page via screenshots.
 
 Available actions (respond with a JSON code block):
 \`\`\`json
@@ -47,11 +49,11 @@ Rules:
 - If an action fails, try a different approach — use x/y coordinates, scroll the page, or try a different selector
 - After each action you'll receive a new screenshot showing the result`;
 
-function buildSystemPrompt(goal: string): string {
+export function buildSystemPrompt(goal: string): string {
   return `${SYSTEM_PROMPT}\n\nYour goal: ${goal}`;
 }
 
-function parseAction(text: string): BrowserAction | null {
+export function parseAction(text: string): BrowserAction | null {
   const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   const jsonStr = codeBlockMatch ? codeBlockMatch[1]! : null;
 
@@ -165,6 +167,15 @@ async function runLoop(): Promise<BrowserTaskResult> {
       { iteration, url: result.metadata.url, title: result.metadata.title },
       "Browser action succeeded",
     );
+
+    recordTurn({
+      goal: currentGoal,
+      screenshot: result.screenshot,
+      pageUrl: result.metadata.url,
+      pageTitle: result.metadata.title,
+      action,
+      reasoning: assistantText,
+    });
 
     const userContent: Anthropic.ContentBlockParam[] = [
       {

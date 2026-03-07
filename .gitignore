@@ -5,3 +5,6 @@ data/
 *.db
 *.db-journal
 skills/.skills-cache.json
+src/modules/browser/eval/fixtures/*.jpg
+src/modules/browser/eval/fixtures/*.json
+src/modules/browser/eval/results/
