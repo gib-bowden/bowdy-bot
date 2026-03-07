@@ -11,6 +11,7 @@ Family AI assistant for the Bowden household — manages tasks, groceries, calen
 - **Platforms**: Console (default), Telegram (grammy), Twilio SMS, GroupMe
 - **Calendar**: Google Calendar API via `googleapis` package (OAuth 2.0)
 - **Grocery**: Google Tasks (list management, cart tracking) + Kroger API (product search, cart sync, product preferences)
+- **Browser**: Playwright (headless Chromium) for autonomous web interaction — vision-driven agent loop
 - **Skills**: Anthropic Skills API — syncs local skill definitions for code execution
 
 ## Project Structure
@@ -50,6 +51,17 @@ src/
       action-handler.ts # HTTP webhook handler for one-click triage action buttons
       api.ts            # Gmail API client (list, archive, trash, send, labels)
       rules.ts          # Email auto-archive rules (domain, sender, subject matching)
+    browser/            # Playwright browser automation — vision-driven web agent
+      index.ts          # 2 tools: browser_task, browser_task_continue
+      agent.ts          # Agent loop — Claude + screenshots, busy lock, conversation state
+      actions.ts        # Action executor (click, type, navigate, scroll) + URL validation
+      session.ts        # Chromium lifecycle (lazy launch, inactivity timeout, cleanup)
+      eval/             # Eval system for testing agent action selection
+        capture.ts      # Records fixtures from real sessions (BROWSER_EVAL_RECORD=1)
+        scoring.ts      # Three-tier scoring: exact match, LLM intent grading, type match
+        eval.test.ts    # Eval runner (npm run eval) — real API calls, JSON results output
+        fixtures/       # JPEG screenshots + JSON metadata (gitignored, captured from sessions)
+        results/        # Eval run results (gitignored)
     reminders/          # Reminder tools (create, list, cancel) — SQLite + node-schedule
     chat/               # Fallback chat module (no tools)
   cron/
@@ -82,6 +94,9 @@ src/
 - **Skills**: Optional. Read from `skills/` directory (one subdirectory per skill with `SKILL.md`). Synced to Anthropic API on startup (best-effort, continues on failure). Enables code execution tool in router.
 - **Proactive features**: Morning briefing (daily cron) and reminders (exact-time scheduling) run as in-process scheduled jobs via `node-schedule`. Both send messages to GroupMe via exported `sendGroupMeMessage()`. The scheduler starts in `src/index.ts` when `GROUPME_BOT_ID` is set.
 - **Reminder recovery**: On startup, `recoverReminders()` queries unfired reminders from SQLite and re-schedules them (or fires immediately if overdue). This handles process restarts gracefully.
+- **Browser agent**: Playwright-based vision agent for interacting with websites (booking, forms, etc.). Claude Sonnet receives screenshots and returns JSON actions (click, type, scroll, navigate). Single-session with busy lock — rejects concurrent tasks. URL validation blocks SSRF (private IPs, localhost, metadata endpoints). Force-click fallback handles overlay/navbar interception. Session auto-closes after 5 min inactivity. Gated behind `ENABLE_BROWSER=true`.
+- **Browser evals**: Single-turn decision evals testing action selection given a screenshot + goal. Capture fixtures from real sessions with `BROWSER_EVAL_RECORD=1`, curate with `action_intent` labels, run with `npm run eval`. Three-tier scoring: exact match (50px coordinate tolerance), LLM-as-judge intent grading, action type match. Supports `EVAL_MODEL` for model comparison and `EVAL_RUNS=N` for majority vote.
+- **Prompting philosophy**: Keep system prompts thin (identity + context only). Let tool descriptions drive routing — Claude reads them and picks the right tool. Avoid anti-instructions ("do NOT use X") in favor of positive descriptions of what each tool does.
 
 ## Cart System
 
@@ -103,6 +118,7 @@ npm run build           # Production build (tsup)
 npm start               # Run production build
 npm run build && npm start  # Smoke-test production bundle before pushing
 npx vitest run          # Run tests (co-located *.test.ts files next to source)
+npm run eval            # Run browser agent evals (real API calls, separate config)
 ```
 
 ## Environment Variables
