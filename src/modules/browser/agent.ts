@@ -103,7 +103,7 @@ async function runLoop(): Promise<BrowserTaskResult> {
   const page = await getPage();
 
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-    logger.debug({ iteration, goal: currentGoal }, "Browser agent iteration");
+    logger.info({ iteration, goal: currentGoal }, "Browser agent iteration");
 
     trimScreenshotHistory(conversationMessages);
 
@@ -119,15 +119,19 @@ async function runLoop(): Promise<BrowserTaskResult> {
       .map((b) => b.text)
       .join("\n");
 
+    logger.info({ iteration, reasoning: assistantText.slice(0, 500) }, "Browser agent response");
+
     conversationMessages.push({ role: "assistant", content: assistantText });
 
     if (assistantText.includes("[DONE]")) {
       const summary = assistantText.split("[DONE]").pop()?.trim() || "Task completed";
+      logger.info({ iteration, summary }, "Browser task completed");
       return { status: "done", summary };
     }
 
     if (assistantText.includes("[NEED_INPUT]")) {
       const question = assistantText.split("[NEED_INPUT]").pop()?.trim() || "I need more information";
+      logger.info({ iteration, question }, "Browser task needs input");
       return {
         status: "needs_input",
         question,
@@ -137,6 +141,7 @@ async function runLoop(): Promise<BrowserTaskResult> {
 
     const action = parseAction(assistantText);
     if (!action) {
+      logger.warn({ iteration }, "Browser agent returned unparseable action");
       conversationMessages.push({
         role: "user",
         content: [{ type: "text", text: "I couldn't parse an action from your response. Please respond with a valid JSON action block." }],
@@ -144,16 +149,22 @@ async function runLoop(): Promise<BrowserTaskResult> {
       continue;
     }
 
-    logger.debug({ action: action.action }, "Executing browser action");
+    logger.info({ iteration, action }, "Executing browser action");
     const result = await executeAction(page, action);
 
     if (!isActionResult(result)) {
+      logger.warn({ iteration, action: action.action, error: result.error }, "Browser action failed");
       conversationMessages.push({
         role: "user",
         content: [{ type: "text", text: `Action failed: ${result.error}` }],
       });
       continue;
     }
+
+    logger.info(
+      { iteration, url: result.metadata.url, title: result.metadata.title },
+      "Browser action succeeded",
+    );
 
     const userContent: Anthropic.ContentBlockParam[] = [
       {
@@ -173,6 +184,7 @@ async function runLoop(): Promise<BrowserTaskResult> {
     conversationMessages.push({ role: "user", content: userContent });
   }
 
+  logger.warn({ iterations: MAX_ITERATIONS, url: page.url() }, "Browser task hit max iterations");
   return {
     status: "max_iterations",
     summary: `Reached maximum of ${MAX_ITERATIONS} iterations. Last page: ${page.url()}`,
@@ -189,6 +201,8 @@ export async function startBrowserTask(url: string, goal: string): Promise<Brows
   if (urlError) {
     return { status: "error", error: urlError };
   }
+
+  logger.info({ url, goal }, "Starting browser task");
 
   busy = true;
   conversationMessages = [];
@@ -237,6 +251,8 @@ export async function continueBrowserTask(userResponse: string): Promise<Browser
   if (conversationMessages.length === 0) {
     return { status: "error", error: "No active browser session to continue. Start a new browser_task first." };
   }
+
+  logger.info({ userResponse: userResponse.slice(0, 200) }, "Continuing browser task");
 
   conversationMessages.push({
     role: "user",
