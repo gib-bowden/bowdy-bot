@@ -20,7 +20,7 @@ const tools: Anthropic.Tool[] = [
   {
     name: "browser_task",
     description:
-      "Open a browser and perform a web task autonomously. Navigates to the URL and uses vision to interact with the page to accomplish the goal. Returns a result when done, or asks for user input if needed. Good for booking appointments, filling forms, checking websites, etc.",
+      "Open a real browser to interact with a website — click buttons, fill forms, navigate pages. Use this instead of web_search when the task requires INTERACTING with a site (booking appointments, filling out forms, signing up, checking availability on a booking page, adding items to a cart, etc.). Do NOT use web_search for these tasks — it can only read search results, not interact with websites.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -56,7 +56,8 @@ const tools: Anthropic.Tool[] = [
 
 export const browserModule: Module<BrowserInputs> = {
   name: "browser",
-  description: "Browser automation for web tasks like booking appointments, filling forms, and checking websites",
+  description:
+    "Browser automation for web tasks like booking appointments, filling forms, and checking websites",
   tools,
   async executeTool(name, input): Promise<unknown> {
     switch (name) {
