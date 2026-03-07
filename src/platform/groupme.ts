@@ -62,13 +62,14 @@ async function classifyMessage(
     conversationContext = `\nRecent group chat messages (oldest first):\n${lines.join("\n")}\n`;
   }
 
-  const prompt = `You are a classifier for a family group chat. Bowdy Bot is an AI assistant that can check grocery lists, the Kroger cart, calendars/schedules, set reminders, search the web, run email triage/scans, and answer general knowledge questions.
+  const prompt = `You are a classifier for a family group chat. Bowdy Bot is an AI assistant that can check grocery lists, the Kroger cart, calendars/schedules, set reminders, search the web, run email triage/scans, browse websites/book appointments, and answer general knowledge questions.
 
 Determine if the following message is something Bowdy Bot should respond to, or if it's just regular conversation between family members.
 
 A message IS for the bot if:
 - It asks about or wants to manage a list, grocery cart, calendar, schedule, or email (e.g., "what's on the list", "what's in the cart", "what's today look like", "run an email triage")
 - It asks a question or makes a request that requires information lookup or tools (recipes, weather, reminders, general knowledge, product search, etc.)
+- It asks the bot to do something on a website, book an appointment, or perform any web/browser task (e.g., "book me a haircut", "check the Local Honey website", "sign me up for...")
 - It's a follow-up to a recent bot response (check the conversation context)
 - It directly addresses the bot by name or role
 - When in doubt and the message could reasonably be a request for the bot, say YES
@@ -230,11 +231,6 @@ export class GroupMePlatform implements Platform {
         );
 
         try {
-          // Send acknowledgment so the group knows the bot heard them
-          await sendGroupMeMessage(this.botId, "On it...").catch((err) =>
-            logger.warn({ err }, "Failed to send acknowledgment"),
-          );
-
           const responseText = await handler(message);
           const chunks = splitMessage(responseText);
           for (let i = 0; i < chunks.length; i++) {
