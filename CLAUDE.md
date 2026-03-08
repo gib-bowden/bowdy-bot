@@ -59,6 +59,8 @@ npm start                         # Run production build
 npm run build && npm start        # Smoke-test before pushing
 npx vitest run                    # Run tests
 npm run eval                      # Browser agent evals (real API calls)
+npm run eval:e2e                  # E2E browser evals (live sites, real API)
+                                  # Filter: EVAL_SCENARIOS=resy-booking-vague npm run eval:e2e
 ```
 
 ## Environment Variables

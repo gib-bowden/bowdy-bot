@@ -9,3 +9,5 @@ src/modules/browser/eval/fixtures/*.jpg
 src/modules/browser/eval/fixtures/*.json
 src/modules/browser/eval/results/
 src/modules/browser/eval/sessions/
+src/modules/browser/eval/e2e-screenshots/
+src/modules/browser/eval/scenarios/
