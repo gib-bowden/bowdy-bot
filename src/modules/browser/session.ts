@@ -49,14 +49,8 @@ export async function closeBrowser(): Promise<void> {
   logger.info("Browser closed");
 }
 
-// Cleanup on process exit
-process.on("exit", () => {
-  if (browser) {
-    browser.close().catch(() => {});
-    browser = null;
-    page = null;
-  }
-});
+// Note: no "exit" handler — async browser.close() can't resolve in the synchronous "exit" event.
+// SIGTERM/SIGINT handlers below cover graceful shutdown.
 
 async function shutdownBrowser(): Promise<void> {
   await closeBrowser();

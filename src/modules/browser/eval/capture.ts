@@ -2,7 +2,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BrowserAction } from "../actions.js";
-import type { BrowserTaskResult } from "../agent.js";
+import type { BrowserTaskResult } from "../types.js";
 
 const RECORDING = process.env["BROWSER_EVAL_RECORD"] === "1";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -26,6 +26,14 @@ export interface SessionTurn {
   page_title?: string;
   consecutive_errors: number;
   retry_nudge_injected: boolean;
+
+  // Layer-level fields (optional for backward compatibility)
+  layer?: "router" | "actor" | "verifier";
+  subtask_id?: string;
+  router_decision?: string;
+  router_instruction?: string;
+  verifier_pass?: boolean;
+  verifier_description?: string;
 }
 
 interface SessionRecording {
@@ -36,7 +44,7 @@ interface SessionRecording {
   end_time?: string;
   duration_ms?: number;
   outcome?: BrowserTaskResult;
-  total_iterations: number;
+  total_turns: number;
   total_errors: number;
   model: string;
   initial_screenshot_file: string;
@@ -84,7 +92,7 @@ export function startSession(opts: {
     goal: opts.goal,
     start_url: opts.startUrl,
     start_time: now.toISOString(),
-    total_iterations: 0,
+    total_turns: 0,
     total_errors: 0,
     model: opts.model,
     initial_screenshot_file: "initial.jpg",
@@ -106,7 +114,7 @@ export function recordSessionTurn(turn: SessionTurn, screenshot?: Buffer): void 
   }
 
   session.turns.push(turn);
-  session.total_iterations = session.turns.length;
+  session.total_turns = session.turns.length;
 
   flushSession();
 }

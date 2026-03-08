@@ -2,14 +2,17 @@ import type { Page, Frame } from "playwright";
 import { logger } from "../../logger.js";
 
 export type BrowserAction =
-  | { action: "click"; selector?: string; x?: number; y?: number }
+  | { action: "click"; selector?: string; x?: number; y?: number; label?: number }
   | { action: "type"; selector?: string; text: string; press_enter?: boolean }
   | { action: "select"; selector: string; value?: string; label?: string }
   | { action: "scroll"; direction: "up" | "down"; amount?: number }
   | { action: "wait"; seconds?: number }
   | { action: "go_back" }
   | { action: "navigate"; url: string }
-  | { action: "screenshot" };
+  | { action: "screenshot" }
+  | { action: "hover"; selector?: string; x?: number; y?: number; label?: number }
+  | { action: "press_key"; key: string }
+  | { action: "fill"; selector: string; text: string };
 
 /**
  * Validate that a URL is safe to navigate to (no SSRF).
@@ -52,12 +55,14 @@ export function validateUrl(url: string): string | null {
 }
 
 export interface ActionResult {
+  kind: "result";
   screenshot: Buffer;
   metadata: { url: string; title: string };
   error?: string;
 }
 
 export interface ActionError {
+  kind: "error";
   error: string;
 }
 
@@ -101,7 +106,7 @@ export async function executeAction(
       case "navigate": {
         const urlError = validateUrl(action.url);
         if (urlError) {
-          return { error: urlError };
+          return { kind: "error", error: urlError };
         }
         await page.goto(action.url, { waitUntil: "load", timeout: 15000 });
         await settle(page);
@@ -120,7 +125,7 @@ export async function executeAction(
         } else if (action.x !== undefined && action.y !== undefined) {
           await page.mouse.click(action.x, action.y);
         } else {
-          return { error: "click requires selector or x/y coordinates" };
+          return { kind: "error", error: "click requires selector or x/y coordinates" };
         }
         await settle(page);
         break;
@@ -151,7 +156,7 @@ export async function executeAction(
           const value = action.value;
           await tryInFrames(page, (f) => f.selectOption(action.selector, value, { timeout: FRAME_TIMEOUT_MS }));
         } else {
-          return { error: "select requires value or label" };
+          return { kind: "error", error: "select requires value or label" };
         }
         await settle(page);
         break;
@@ -175,16 +180,43 @@ export async function executeAction(
         await settle(page);
         break;
 
+      case "hover":
+        if (action.selector) {
+          const selector = action.selector;
+          await tryInFrames(page, (f) => f.hover(selector, { timeout: FRAME_TIMEOUT_MS }));
+        } else if (action.x !== undefined && action.y !== undefined) {
+          await page.mouse.move(action.x, action.y);
+        } else {
+          return { kind: "error", error: "hover requires selector or x/y coordinates" };
+        }
+        await settle(page);
+        break;
+
+      case "press_key":
+        await page.keyboard.press(action.key);
+        if (action.key === "Enter" || action.key === "Escape" || action.key === "Tab") {
+          await settle(page);
+        }
+        break;
+
+      case "fill": {
+        const fillSelector = action.selector;
+        await tryInFrames(page, (f) => f.fill(fillSelector, action.text, { timeout: FRAME_TIMEOUT_MS }));
+        await settle(page);
+        break;
+      }
+
       case "screenshot":
         // Just take the screenshot, no other action
         break;
 
       default:
-        return { error: `Unknown action: ${(action as BrowserAction).action}` };
+        return { kind: "error", error: `Unknown action: ${(action as BrowserAction).action}` };
     }
 
     const screenshot = await takeScreenshot(page);
     return {
+      kind: "result",
       screenshot,
       metadata: { url: page.url(), title: await page.title() },
     };
@@ -196,12 +228,36 @@ export async function executeAction(
     try {
       const screenshot = await takeScreenshot(page);
       return {
+        kind: "result",
         screenshot,
         metadata: { url: page.url(), title: await page.title() },
         error: message,
       };
     } catch {
-      return { error: message };
+      return { kind: "error", error: message };
     }
   }
+}
+
+export function parseAction(text: string): BrowserAction | null {
+  const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  const jsonStr = codeBlockMatch ? codeBlockMatch[1]! : null;
+
+  if (!jsonStr) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(jsonStr.trim());
+    if (parsed && typeof parsed.action === "string") {
+      return parsed as BrowserAction;
+    }
+  } catch {
+    // Not valid JSON
+  }
+  return null;
+}
+
+export function isActionResult(result: ActionResult | ActionError): result is ActionResult {
+  return result.kind === "result";
 }
