@@ -9,6 +9,7 @@ const MAX_ITERATIONS = 20;
 const MAX_SCREENSHOTS_IN_HISTORY = 3;
 export const DEFAULT_BROWSER_MODEL = "claude-sonnet-4-6";
 const MODEL = process.env["EVAL_MODEL"] || DEFAULT_BROWSER_MODEL;
+const RETRY_NUDGE = "You have failed multiple actions in a row. Try a completely different approach: use x/y coordinates instead of selectors, type without a selector, or use [NEED_INPUT] to ask the user for help.";
 
 export type BrowserTaskResult =
   | { status: "done"; summary: string }
@@ -20,6 +21,7 @@ export type BrowserTaskResult =
 let conversationMessages: Anthropic.MessageParam[] = [];
 let currentGoal: string = "";
 let busy = false;
+let consecutiveErrors = 0;
 
 export function isBrowserBusy(): boolean {
   return busy;
@@ -33,6 +35,7 @@ Available actions (respond with a JSON code block):
 { "action": "click", "selector": "css selector" }
 { "action": "click", "x": 100, "y": 200 }
 { "action": "type", "selector": "css selector", "text": "...", "press_enter": true }
+{ "action": "type", "text": "..." }
 { "action": "select", "selector": "css selector", "label": "Option text" }
 { "action": "scroll", "direction": "down", "amount": 500 }
 { "action": "wait", "seconds": 2 }
@@ -46,7 +49,10 @@ Rules:
 - When the task is complete, respond with [DONE] followed by a summary of what was accomplished
 - If you need information from the user to proceed, respond with [NEED_INPUT] followed by your question
 - Prefer CSS selectors for clicking/typing when possible; use x/y coordinates as a fallback
-- If an action fails, try a different approach — use x/y coordinates, scroll the page, or try a different selector
+- \`type\` without a selector types into the currently focused element — useful when selectors fail
+- After each action, verify the screenshot shows the expected result before proceeding
+- Only navigate to URLs visible on the page — never guess or construct URLs
+- If an action fails twice, switch strategy: try coordinates instead of selectors, use keyboard typing without a selector, or use [NEED_INPUT]
 - After each action you'll receive a new screenshot showing the result`;
 
 export function buildSystemPrompt(goal: string): string {
@@ -155,18 +161,32 @@ async function runLoop(): Promise<BrowserTaskResult> {
     const result = await executeAction(page, action);
 
     if (!isActionResult(result)) {
-      logger.warn({ iteration, action: action.action, error: result.error }, "Browser action failed");
+      consecutiveErrors++;
+      logger.warn({ iteration, action: action.action, error: result.error, consecutiveErrors }, "Browser action failed");
+      let errorText = `Action failed: ${result.error}`;
+      if (consecutiveErrors >= 2) {
+        errorText += `\n\n${RETRY_NUDGE}`;
+      }
       conversationMessages.push({
         role: "user",
-        content: [{ type: "text", text: `Action failed: ${result.error}` }],
+        content: [{ type: "text", text: errorText }],
       });
       continue;
     }
 
-    logger.info(
-      { iteration, url: result.metadata.url, title: result.metadata.title },
-      "Browser action succeeded",
-    );
+    if (result.error) {
+      consecutiveErrors++;
+      logger.warn(
+        { iteration, action: action.action, error: result.error, consecutiveErrors },
+        "Browser action failed (with screenshot)",
+      );
+    } else {
+      consecutiveErrors = 0;
+      logger.info(
+        { iteration, url: result.metadata.url, title: result.metadata.title },
+        "Browser action succeeded",
+      );
+    }
 
     recordTurn({
       goal: currentGoal,
@@ -177,7 +197,16 @@ async function runLoop(): Promise<BrowserTaskResult> {
       reasoning: assistantText,
     });
 
-    const userContent: Anthropic.ContentBlockParam[] = [
+    const userContent: Anthropic.ContentBlockParam[] = [];
+
+    if (result.error) {
+      userContent.push({
+        type: "text",
+        text: `Action error: ${result.error}`,
+      });
+    }
+
+    userContent.push(
       {
         type: "image",
         source: {
@@ -190,7 +219,14 @@ async function runLoop(): Promise<BrowserTaskResult> {
         type: "text",
         text: `Page: ${result.metadata.url} — ${result.metadata.title}`,
       },
-    ];
+    );
+
+    if (consecutiveErrors >= 2) {
+      userContent.push({
+        type: "text",
+        text: RETRY_NUDGE,
+      });
+    }
 
     conversationMessages.push({ role: "user", content: userContent });
   }
@@ -218,6 +254,7 @@ export async function startBrowserTask(url: string, goal: string): Promise<Brows
   busy = true;
   conversationMessages = [];
   currentGoal = goal;
+  consecutiveErrors = 0;
 
   const page = await getPage();
 

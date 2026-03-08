@@ -1,4 +1,4 @@
-import type { Page } from "playwright";
+import type { Page, Frame } from "playwright";
 import { logger } from "../../logger.js";
 
 export type BrowserAction =
@@ -54,6 +54,7 @@ export function validateUrl(url: string): string | null {
 export interface ActionResult {
   screenshot: Buffer;
   metadata: { url: string; title: string };
+  error?: string;
 }
 
 export interface ActionError {
@@ -69,6 +70,26 @@ async function takeScreenshot(page: Page): Promise<Buffer> {
 async function settle(page: Page): Promise<void> {
   await page.waitForLoadState("load").catch(() => {});
   await new Promise((resolve) => setTimeout(resolve, SETTLE_DELAY_MS));
+}
+
+const FRAME_TIMEOUT_MS = 2000;
+
+async function tryInFrames<T>(page: Page, fn: (frame: Frame) => Promise<T>): Promise<T> {
+  try {
+    return await fn(page.mainFrame());
+  } catch {
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) {
+        continue;
+      }
+      try {
+        return await fn(frame);
+      } catch {
+        continue;
+      }
+    }
+    throw new Error("Selector not found in main frame or any iframe");
+  }
 }
 
 export async function executeAction(
@@ -89,11 +110,12 @@ export async function executeAction(
 
       case "click":
         if (action.selector) {
+          const selector = action.selector;
           try {
-            await page.click(action.selector, { timeout: 5000 });
+            await tryInFrames(page, (f) => f.click(selector, { timeout: FRAME_TIMEOUT_MS }));
           } catch {
             // Retry with force if an overlay/navbar intercepts the click
-            await page.click(action.selector, { force: true, timeout: 5000 });
+            await tryInFrames(page, (f) => f.click(selector, { force: true, timeout: FRAME_TIMEOUT_MS }));
           }
         } else if (action.x !== undefined && action.y !== undefined) {
           await page.mouse.click(action.x, action.y);
@@ -105,7 +127,13 @@ export async function executeAction(
 
       case "type":
         if (action.selector) {
-          await page.fill(action.selector, action.text);
+          const selector = action.selector;
+          try {
+            await tryInFrames(page, (f) => f.fill(selector, action.text, { timeout: FRAME_TIMEOUT_MS }));
+          } catch {
+            logger.warn({ selector: action.selector }, "fill failed across all frames, falling back to keyboard.type");
+            await page.keyboard.type(action.text);
+          }
         } else {
           await page.keyboard.type(action.text);
         }
@@ -117,9 +145,11 @@ export async function executeAction(
 
       case "select":
         if (action.label) {
-          await page.selectOption(action.selector, { label: action.label });
+          const label = action.label;
+          await tryInFrames(page, (f) => f.selectOption(action.selector, { label }, { timeout: FRAME_TIMEOUT_MS }));
         } else if (action.value) {
-          await page.selectOption(action.selector, action.value);
+          const value = action.value;
+          await tryInFrames(page, (f) => f.selectOption(action.selector, value, { timeout: FRAME_TIMEOUT_MS }));
         } else {
           return { error: "select requires value or label" };
         }
@@ -168,6 +198,7 @@ export async function executeAction(
       return {
         screenshot,
         metadata: { url: page.url(), title: await page.title() },
+        error: message,
       };
     } catch {
       return { error: message };
