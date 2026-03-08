@@ -14,8 +14,8 @@ const SPLIT_DELAY_MS = 500;
 const GROUPME_API_URL = "https://api.groupme.com/v3/bots/post";
 const MAX_RECENT_MESSAGES = 10;
 
-/** Tools that take a long time — send an acknowledgment before processing */
-const LONG_RUNNING_PATTERNS = /\b(book|appointment|schedule|sign.?up|register|browse|website|check.*(site|page|website)|fill.*(form|out)|browser|triage|scan.*(email|inbox))\b/i;
+/** Tools that take a long time — send "On it..." when invoked */
+const LONG_RUNNING_TOOLS = new Set(["browser_task", "browser_task_continue", "scan_inbox"]);
 
 /** Fast-path: explicit bot name mention skips the classifier */
 const FAST_TRIGGERS = /\b(bowdy|bowdey|bowdy bot|bowdey bot)\b/i;
@@ -234,14 +234,19 @@ export class GroupMePlatform implements Platform {
         );
 
         try {
-          // Send acknowledgment for likely long-running tasks
-          if (LONG_RUNNING_PATTERNS.test(item.text)) {
-            await sendGroupMeMessage(this.botId, "On it...").catch((err) =>
-              logger.warn({ err }, "Failed to send acknowledgment"),
-            );
-          }
+          let ackSent = false;
+          const callbacks = {
+            onToolUse: (toolName: string) => {
+              if (!ackSent && LONG_RUNNING_TOOLS.has(toolName)) {
+                ackSent = true;
+                sendGroupMeMessage(this.botId, "On it...").catch((err) =>
+                  logger.warn({ err }, "Failed to send acknowledgment"),
+                );
+              }
+            },
+          };
 
-          const responseText = await handler(message);
+          const responseText = await handler(message, callbacks);
           const chunks = splitMessage(responseText);
           for (let i = 0; i < chunks.length; i++) {
             if (i > 0) {
