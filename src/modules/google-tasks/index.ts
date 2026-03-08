@@ -172,7 +172,8 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: "complete_task",
-    description: "Mark a task as completed by its title (partial match supported).",
+    description:
+      "Mark a task as completed/done by its title (partial match supported). Use this when the user says they finished, completed, or are done with a task. This keeps the task in the list with a completed status.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -187,7 +188,7 @@ const tools: Anthropic.Tool[] = [
   {
     name: "delete_task",
     description:
-      "Permanently delete a task by its title (partial match supported). This is destructive — first call without confirm to preview what will be deleted, then call again with confirm=true after the user agrees.",
+      "Permanently delete a task by its title (partial match supported). Only use this when the user explicitly asks to delete or remove a task — NOT when they say they finished or completed it (use complete_task for that). This is destructive — first call without confirm to preview what will be deleted, then call again with confirm=true after the user agrees.",
     input_schema: {
       type: "object" as const,
       properties: {
