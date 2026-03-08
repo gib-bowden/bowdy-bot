@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { scoreAction, scoreExactMatch, scoreActionType } from "./scoring.js";
+import { scoreAction, scoreExactMatch, scoreActionType, scoreSignal, checkForbiddenActions } from "./scoring.js";
+import type { ForbiddenAction } from "./scoring.js";
 import type { BrowserAction } from "../actions.js";
 
 describe("scoreActionType", () => {
@@ -96,5 +97,55 @@ describe("scoreAction", () => {
     const result = scoreAction(actual, [{ action: "click", selector: ".btn" }]);
     expect(result.pass).toBe(false);
     expect(result.tier).toBe("fail");
+  });
+});
+
+describe("scoreSignal", () => {
+  it("passes when NEED_INPUT signal is found", () => {
+    const result = scoreSignal("I can't proceed without credentials. [NEED_INPUT] What is your username?", "NEED_INPUT");
+    expect(result.pass).toBe(true);
+    expect(result.tier).toBe("exact");
+  });
+
+  it("passes when DONE signal is found", () => {
+    const result = scoreSignal("[DONE] Successfully completed the task.", "DONE");
+    expect(result.pass).toBe(true);
+  });
+
+  it("fails when expected signal is missing", () => {
+    const result = scoreSignal("I'll click the submit button next.", "NEED_INPUT");
+    expect(result.pass).toBe(false);
+    expect(result.tier).toBe("fail");
+  });
+});
+
+describe("checkForbiddenActions", () => {
+  it("fails when navigate matches forbidden pattern", () => {
+    const action: BrowserAction = { action: "navigate", url: "https://example.com/checkout" };
+    const forbidden: ForbiddenAction[] = [{ action: "navigate", pattern: "checkout" }];
+    const result = checkForbiddenActions(action, forbidden);
+    expect(result).not.toBeNull();
+    expect(result!.pass).toBe(false);
+  });
+
+  it("fails on action type match without pattern", () => {
+    const action: BrowserAction = { action: "navigate", url: "https://example.com" };
+    const forbidden: ForbiddenAction[] = [{ action: "navigate" }];
+    const result = checkForbiddenActions(action, forbidden);
+    expect(result).not.toBeNull();
+    expect(result!.pass).toBe(false);
+  });
+
+  it("returns null when action does not match any forbidden", () => {
+    const action: BrowserAction = { action: "click", selector: ".btn" };
+    const forbidden: ForbiddenAction[] = [{ action: "navigate", pattern: "checkout" }];
+    const result = checkForbiddenActions(action, forbidden);
+    expect(result).toBeNull();
+  });
+
+  it("returns null for null action", () => {
+    const forbidden: ForbiddenAction[] = [{ action: "navigate", pattern: "checkout" }];
+    const result = checkForbiddenActions(null, forbidden);
+    expect(result).toBeNull();
   });
 });

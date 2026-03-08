@@ -8,6 +8,8 @@ import { parseAction, buildSystemPrompt, DEFAULT_BROWSER_MODEL } from "../agent.
 import {
   scoreAction,
   scoreIntent,
+  scoreSignal,
+  checkForbiddenActions,
   type EvalFixture,
   type EvalResult,
   type ScoreResult,
@@ -31,7 +33,7 @@ function loadFixtures(): EvalFixture[] {
     .filter((f) => f.endsWith(".json"))
     .filter((f) => !glob || f.match(new RegExp(glob.replace(/\*/g, ".*"))))
     .map((f) => JSON.parse(readFileSync(join(FIXTURES_DIR, f), "utf-8")) as EvalFixture)
-    .filter((f) => f.acceptable_actions.length > 0);
+    .filter((f) => f.acceptable_actions.length > 0 || !!f.expected_signal);
 }
 
 async function evalSingleTurn(
@@ -53,25 +55,56 @@ async function evalSingleTurn(
 
   const screenshotBase64 = readFileSync(screenshotPath).toString("base64");
 
-  const messages: Anthropic.MessageParam[] = [
-    {
-      role: "user",
-      content: [
-        {
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: "image/jpeg",
-            data: screenshotBase64,
-          },
+  const messages: Anthropic.MessageParam[] = [];
+
+  // Prepend conversation history if present (for multi-turn fixtures like stuck detection)
+  if (fixture.conversation_history) {
+    for (const turn of fixture.conversation_history) {
+      if (turn.role === "user" && turn.screenshot_file) {
+        const turnScreenshotPath = join(FIXTURES_DIR, turn.screenshot_file);
+        if (existsSync(turnScreenshotPath)) {
+          const turnScreenshot = readFileSync(turnScreenshotPath).toString("base64");
+          messages.push({
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: turnScreenshot,
+                },
+              },
+              { type: "text", text: turn.content },
+            ],
+          });
+        } else {
+          messages.push({ role: turn.role, content: turn.content });
+        }
+      } else {
+        messages.push({ role: turn.role, content: turn.content });
+      }
+    }
+  }
+
+  // Final turn: current screenshot + goal
+  messages.push({
+    role: "user",
+    content: [
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/jpeg",
+          data: screenshotBase64,
         },
-        {
-          type: "text",
-          text: `Page: ${fixture.page_url} — ${fixture.page_title}\n\nGoal: ${fixture.goal}\n\nWhat's your next action?`,
-        },
-      ],
-    },
-  ];
+      },
+      {
+        type: "text",
+        text: `Page: ${fixture.page_url} — ${fixture.page_title}\n\nGoal: ${fixture.goal}\n\nWhat's your next action?`,
+      },
+    ],
+  });
 
   const start = Date.now();
   const response = await client.messages.create({
@@ -90,18 +123,34 @@ async function evalSingleTurn(
 
   const action = parseAction(assistantText);
 
-  // Score: try exact/type match first, then LLM intent grader for type_only matches
-  let score: ScoreResult = scoreAction(action, fixture.acceptable_actions);
+  // Score based on fixture type
+  let score: ScoreResult;
 
-  if (score.tier === "type_only" && fixture.action_intent && action) {
-    const intentResult = await scoreIntent(
-      screenshotBase64,
-      fixture.goal,
-      fixture.action_intent,
-      action,
-    );
-    if (intentResult.pass) {
-      score = { pass: true, tier: "intent", details: intentResult.reasoning };
+  if (fixture.expected_signal) {
+    // Signal-based scoring (e.g., NEED_INPUT, DONE)
+    score = scoreSignal(assistantText, fixture.expected_signal);
+  } else {
+    // Action-based scoring: try exact/type match first, then LLM intent grader
+    score = scoreAction(action, fixture.acceptable_actions);
+
+    if (score.tier === "type_only" && fixture.action_intent && action) {
+      const intentResult = await scoreIntent(
+        screenshotBase64,
+        fixture.goal,
+        fixture.action_intent,
+        action,
+      );
+      if (intentResult.pass) {
+        score = { pass: true, tier: "intent", details: intentResult.reasoning };
+      }
+    }
+  }
+
+  // Check forbidden actions (override score to fail if violated)
+  if (fixture.forbidden_actions && action) {
+    const forbiddenResult = checkForbiddenActions(action, fixture.forbidden_actions);
+    if (forbiddenResult) {
+      score = forbiddenResult;
     }
   }
 

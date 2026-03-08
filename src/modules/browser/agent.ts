@@ -3,7 +3,7 @@ import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
 import { getPage } from "./session.js";
 import { executeAction, validateUrl, type BrowserAction, type ActionResult } from "./actions.js";
-import { recordTurn } from "./eval/capture.js";
+import { startSession, recordSessionTurn, endSession, type SessionTurn } from "./eval/capture.js";
 
 const MAX_ITERATIONS = 20;
 const MAX_SCREENSHOTS_IN_HISTORY = 3;
@@ -106,6 +106,29 @@ function trimScreenshotHistory(messages: Anthropic.MessageParam[]): void {
   }
 }
 
+function buildSessionTurn(
+  iteration: number,
+  assistantText: string,
+  action: BrowserAction | null,
+  outcome: SessionTurn["action_outcome"],
+  opts?: { error?: string; url?: string; title?: string; consecutiveErrors?: number },
+): SessionTurn {
+  const errors = opts?.consecutiveErrors ?? consecutiveErrors;
+  return {
+    iteration,
+    timestamp: new Date().toISOString(),
+    assistant_text: assistantText,
+    parsed_action: action,
+    action_outcome: outcome,
+    action_error: opts?.error,
+    screenshot_file: null,
+    page_url: opts?.url,
+    page_title: opts?.title,
+    consecutive_errors: errors,
+    retry_nudge_injected: errors >= 2,
+  };
+}
+
 async function runLoop(): Promise<BrowserTaskResult> {
   const client = getClient();
   const page = await getPage();
@@ -134,12 +157,14 @@ async function runLoop(): Promise<BrowserTaskResult> {
     if (assistantText.includes("[DONE]")) {
       const summary = assistantText.split("[DONE]").pop()?.trim() || "Task completed";
       logger.info({ iteration, summary }, "Browser task completed");
+      recordSessionTurn(buildSessionTurn(iteration, assistantText, null, "signal_done"));
       return { status: "done", summary };
     }
 
     if (assistantText.includes("[NEED_INPUT]")) {
       const question = assistantText.split("[NEED_INPUT]").pop()?.trim() || "I need more information";
       logger.info({ iteration, question }, "Browser task needs input");
+      recordSessionTurn(buildSessionTurn(iteration, assistantText, null, "signal_need_input"));
       return {
         status: "needs_input",
         question,
@@ -150,6 +175,7 @@ async function runLoop(): Promise<BrowserTaskResult> {
     const action = parseAction(assistantText);
     if (!action) {
       logger.warn({ iteration }, "Browser agent returned unparseable action");
+      recordSessionTurn(buildSessionTurn(iteration, assistantText, null, "parse_failure"));
       conversationMessages.push({
         role: "user",
         content: [{ type: "text", text: "I couldn't parse an action from your response. Please respond with a valid JSON action block." }],
@@ -163,6 +189,7 @@ async function runLoop(): Promise<BrowserTaskResult> {
     if (!isActionResult(result)) {
       consecutiveErrors++;
       logger.warn({ iteration, action: action.action, error: result.error, consecutiveErrors }, "Browser action failed");
+      recordSessionTurn(buildSessionTurn(iteration, assistantText, action, "error_no_screenshot", { error: result.error }));
       let errorText = `Action failed: ${result.error}`;
       if (consecutiveErrors >= 2) {
         errorText += `\n\n${RETRY_NUDGE}`;
@@ -188,14 +215,16 @@ async function runLoop(): Promise<BrowserTaskResult> {
       );
     }
 
-    recordTurn({
-      goal: currentGoal,
-      screenshot: result.screenshot,
-      pageUrl: result.metadata.url,
-      pageTitle: result.metadata.title,
-      action,
-      reasoning: assistantText,
-    });
+    recordSessionTurn(
+      buildSessionTurn(
+        iteration,
+        assistantText,
+        action,
+        result.error ? "error_with_screenshot" : "success",
+        { error: result.error, url: result.metadata.url, title: result.metadata.title },
+      ),
+      result.screenshot,
+    );
 
     const userContent: Anthropic.ContentBlockParam[] = [];
 
@@ -263,6 +292,16 @@ export async function startBrowserTask(url: string, goal: string): Promise<Brows
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+    const pageTitle = await page.title();
+
+    startSession({
+      goal,
+      startUrl: url,
+      model: MODEL,
+      initialScreenshot: screenshot,
+      pageUrl: url,
+      pageTitle,
+    });
 
     conversationMessages.push({
       role: "user",
@@ -277,13 +316,14 @@ export async function startBrowserTask(url: string, goal: string): Promise<Brows
         },
         {
           type: "text",
-          text: `I've navigated to ${url}. Page title: ${await page.title()}\n\nGoal: ${goal}\n\nWhat's your first action?`,
+          text: `I've navigated to ${url}. Page title: ${pageTitle}\n\nGoal: ${goal}\n\nWhat's your first action?`,
         },
       ],
     });
 
     const result = await runLoop();
     if (result.status !== "needs_input") {
+      endSession(result);
       busy = false;
     }
     return result;
@@ -291,7 +331,9 @@ export async function startBrowserTask(url: string, goal: string): Promise<Brows
     busy = false;
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err: message }, "Browser task failed");
-    return { status: "error", error: message };
+    const errorResult: BrowserTaskResult = { status: "error", error: message };
+    endSession(errorResult);
+    return errorResult;
   }
 }
 
@@ -310,6 +352,7 @@ export async function continueBrowserTask(userResponse: string): Promise<Browser
   try {
     const result = await runLoop();
     if (result.status !== "needs_input") {
+      endSession(result);
       busy = false;
     }
     return result;
@@ -317,6 +360,8 @@ export async function continueBrowserTask(userResponse: string): Promise<Browser
     busy = false;
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err: message }, "Browser task continue failed");
-    return { status: "error", error: message };
+    const errorResult: BrowserTaskResult = { status: "error", error: message };
+    endSession(errorResult);
+    return errorResult;
   }
 }

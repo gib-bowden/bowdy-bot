@@ -5,6 +5,17 @@ import type { BrowserAction } from "../actions.js";
 const COORDINATE_TOLERANCE = 50;
 const GRADER_MODEL = "claude-sonnet-4-6";
 
+export interface ConversationTurn {
+  role: "user" | "assistant";
+  content: string;
+  screenshot_file?: string;
+}
+
+export interface ForbiddenAction {
+  action: string;
+  pattern?: string;
+}
+
 export interface EvalFixture {
   id: string;
   goal: string;
@@ -13,6 +24,10 @@ export interface EvalFixture {
   page_title: string;
   acceptable_actions: BrowserAction[];
   action_intent: string;
+  category?: "iframe" | "stuck" | "url_guessing" | "need_input";
+  conversation_history?: ConversationTurn[];
+  expected_signal?: "NEED_INPUT" | "DONE";
+  forbidden_actions?: ForbiddenAction[];
 }
 
 export type ScoreTier = "exact" | "intent" | "type_only" | "fail";
@@ -143,4 +158,44 @@ export function scoreAction(
     tier: "fail",
     details: `Expected ${acceptable.map((a) => a.action).join("/")}, got ${actual.action}`,
   };
+}
+
+export function scoreSignal(
+  responseText: string,
+  expectedSignal: "NEED_INPUT" | "DONE",
+): ScoreResult {
+  const tag = `[${expectedSignal}]`;
+  if (responseText.includes(tag)) {
+    return { pass: true, tier: "exact", details: `Signal ${tag} found in response` };
+  }
+  return { pass: false, tier: "fail", details: `Expected signal ${tag} not found in response` };
+}
+
+export function checkForbiddenActions(
+  action: BrowserAction | null,
+  forbidden: ForbiddenAction[],
+): ScoreResult | null {
+  if (!action) {
+    return null;
+  }
+  for (const f of forbidden) {
+    if (action.action !== f.action) {
+      continue;
+    }
+    if (!f.pattern) {
+      return { pass: false, tier: "fail", details: `Forbidden action type: ${action.action}` };
+    }
+    let valueToCheck: string | undefined;
+    if (action.action === "navigate") {
+      valueToCheck = action.url;
+    } else if (action.action === "type") {
+      valueToCheck = action.text;
+    } else if (action.action === "click") {
+      valueToCheck = action.selector;
+    }
+    if (valueToCheck && new RegExp(f.pattern, "i").test(valueToCheck)) {
+      return { pass: false, tier: "fail", details: `Forbidden: ${action.action} matching /${f.pattern}/i` };
+    }
+  }
+  return null;
 }
