@@ -23,6 +23,7 @@ async function collectRole(page: Page, role: AriaRole): Promise<A11yElement[]> {
   const locator = page.getByRole(role);
   const count = await locator.count();
   const results: A11yElement[] = [];
+  const viewport = page.viewportSize();
 
   for (let i = 0; i < count; i++) {
     const el: Locator = locator.nth(i);
@@ -39,7 +40,6 @@ async function collectRole(page: Page, role: AriaRole): Promise<A11yElement[]> {
     }
 
     // Skip elements fully off-screen — they won't appear in screenshots
-    const viewport = page.viewportSize();
     if (viewport && (box.y + box.height < 0 || box.y > viewport.height || box.x + box.width < 0 || box.x > viewport.width)) {
       continue;
     }
@@ -49,6 +49,9 @@ async function collectRole(page: Page, role: AriaRole): Promise<A11yElement[]> {
       name = await el.getAttribute("aria-label", { timeout: LOCATOR_TIMEOUT_MS }) ?? "";
       if (!name) {
         name = (await el.innerText({ timeout: LOCATOR_TIMEOUT_MS })).trim();
+      }
+      if (!name) {
+        name = await el.getAttribute("title", { timeout: LOCATOR_TIMEOUT_MS }) ?? "";
       }
       if (!name && (role === "textbox" || role === "combobox")) {
         name = await el.getAttribute("placeholder", { timeout: LOCATOR_TIMEOUT_MS }) ?? "";

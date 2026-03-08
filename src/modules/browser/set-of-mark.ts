@@ -37,16 +37,16 @@ export async function captureWithLabels(page: Page, elements: A11yElement[]): Pr
     return await page.screenshot({ type: "jpeg", quality: 75 });
   }
 
-  // Take screenshot
-  const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
-
-  // Remove overlays
-  await page.evaluate(() => {
-    const badges = document.querySelectorAll("[data-som-label]");
-    for (const badge of badges) {
-      badge.remove();
-    }
-  });
-
-  return screenshot;
+  // Take screenshot, then always remove overlays
+  try {
+    const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+    return screenshot;
+  } finally {
+    await page.evaluate(() => {
+      const badges = document.querySelectorAll("[data-som-label]");
+      for (const badge of badges) {
+        badge.remove();
+      }
+    }).catch(() => {});
+  }
 }

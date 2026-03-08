@@ -23,9 +23,7 @@ function resetSessionTimeout(): void {
   sessionTimeout = setTimeout(() => {
     if (busy) {
       logger.warn("Browser session timed out — releasing busy lock");
-      busy = false;
-      routerGoal = "";
-      routerProgressLog = [];
+      resetSession();
     }
   }, SESSION_TIMEOUT_MS);
 }
@@ -35,6 +33,13 @@ function clearSessionTimeout(): void {
     clearTimeout(sessionTimeout);
     sessionTimeout = null;
   }
+}
+
+function resetSession(): void {
+  busy = false;
+  routerGoal = "";
+  routerProgressLog = [];
+  clearSessionTimeout();
 }
 
 export function isBrowserBusy(): boolean {
@@ -84,17 +89,11 @@ export async function startBrowserTask(url: string, goal: string): Promise<Brows
 
     if (result.status !== "needs_input") {
       endSession(result);
-      busy = false;
-      routerGoal = "";
-      routerProgressLog = [];
-      clearSessionTimeout();
+      resetSession();
     }
     return result;
   } catch (err) {
-    busy = false;
-    routerGoal = "";
-    routerProgressLog = [];
-    clearSessionTimeout();
+    resetSession();
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err: message }, "Browser task failed");
     const errorResult: BrowserTaskResult = { status: "error", error: message };
@@ -132,17 +131,11 @@ export async function continueBrowserTask(userResponse: string): Promise<Browser
 
     if (result.status !== "needs_input") {
       endSession(result);
-      busy = false;
-      routerGoal = "";
-      routerProgressLog = [];
-      clearSessionTimeout();
+      resetSession();
     }
     return result;
   } catch (err) {
-    busy = false;
-    routerGoal = "";
-    routerProgressLog = [];
-    clearSessionTimeout();
+    resetSession();
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err: message }, "Browser task continue failed");
     const errorResult: BrowserTaskResult = { status: "error", error: message };

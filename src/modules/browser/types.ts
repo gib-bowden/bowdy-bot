@@ -7,7 +7,6 @@ export interface SubTask {
 
 export type ActorResult =
   | { status: "success"; summary: string; screenshot: Buffer; metadata: PageMetadata }
-  | { status: "failed"; summary: string; screenshot: Buffer; metadata: PageMetadata }
   | { status: "needs_input"; question: string; context: string }
   | { status: "escalate"; reason: string; screenshot: Buffer; metadata: PageMetadata };
 

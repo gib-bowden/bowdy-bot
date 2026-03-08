@@ -14,7 +14,7 @@ vi.mock("./set-of-mark.js", () => ({
 vi.mock("./actions.js", () => ({
   executeAction: vi.fn(),
   parseAction: vi.fn(),
-  isActionResult: vi.fn((result: unknown) => typeof result === "object" && result !== null && "screenshot" in result),
+  isActionResult: vi.fn((result: unknown) => typeof result === "object" && result !== null && (result as Record<string, unknown>).kind === "result"),
 }));
 
 import { resolveLabel, detectSignal, executeSubTask } from "./actor.js";
@@ -223,6 +223,7 @@ describe("executeSubTask", () => {
 
     vi.mocked(parseAction).mockReturnValueOnce({ action: "click", label: 1 });
     vi.mocked(executeAction).mockResolvedValueOnce({
+      kind: "result",
       screenshot: Buffer.from("result-screenshot"),
       metadata: { url: "https://example.com/success", title: "Success" },
     });
@@ -249,7 +250,7 @@ describe("executeSubTask", () => {
     } as never);
 
     vi.mocked(parseAction).mockReturnValue({ action: "click", selector: "#missing" });
-    vi.mocked(executeAction).mockResolvedValue({ error: "Element not found" });
+    vi.mocked(executeAction).mockResolvedValue({ kind: "error", error: "Element not found" });
 
     const result = await executeSubTask(
       page,
@@ -282,6 +283,7 @@ describe("executeSubTask", () => {
 
     vi.mocked(parseAction).mockReturnValue({ action: "click", selector: "#bad" });
     vi.mocked(executeAction).mockResolvedValue({
+      kind: "result",
       screenshot: Buffer.from("error-screenshot"),
       metadata: { url: "https://example.com", title: "Example" },
       error: "Click intercepted",

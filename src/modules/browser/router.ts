@@ -305,10 +305,8 @@ export async function runRouterLoop(
 
       if (
         actorResult.status === "success" ||
-        actorResult.status === "failed" ||
         actorResult.status === "escalate"
       ) {
-        // Verify the result (only for success claims)
         let verifiedPass = false;
         let stateDescription = "";
 
@@ -323,10 +321,7 @@ export async function runRouterLoop(
           verifiedPass = verifierResult.pass;
           stateDescription = verifierResult.description;
         } else {
-          stateDescription =
-            actorResult.status === "escalate"
-              ? actorResult.reason
-              : actorResult.summary;
+          stateDescription = actorResult.reason;
         }
 
         const outcome: ProgressEntry["outcome"] =

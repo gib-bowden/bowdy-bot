@@ -55,12 +55,14 @@ export function validateUrl(url: string): string | null {
 }
 
 export interface ActionResult {
+  kind: "result";
   screenshot: Buffer;
   metadata: { url: string; title: string };
   error?: string;
 }
 
 export interface ActionError {
+  kind: "error";
   error: string;
 }
 
@@ -104,7 +106,7 @@ export async function executeAction(
       case "navigate": {
         const urlError = validateUrl(action.url);
         if (urlError) {
-          return { error: urlError };
+          return { kind: "error", error: urlError };
         }
         await page.goto(action.url, { waitUntil: "load", timeout: 15000 });
         await settle(page);
@@ -123,7 +125,7 @@ export async function executeAction(
         } else if (action.x !== undefined && action.y !== undefined) {
           await page.mouse.click(action.x, action.y);
         } else {
-          return { error: "click requires selector or x/y coordinates" };
+          return { kind: "error", error: "click requires selector or x/y coordinates" };
         }
         await settle(page);
         break;
@@ -154,7 +156,7 @@ export async function executeAction(
           const value = action.value;
           await tryInFrames(page, (f) => f.selectOption(action.selector, value, { timeout: FRAME_TIMEOUT_MS }));
         } else {
-          return { error: "select requires value or label" };
+          return { kind: "error", error: "select requires value or label" };
         }
         await settle(page);
         break;
@@ -185,7 +187,7 @@ export async function executeAction(
         } else if (action.x !== undefined && action.y !== undefined) {
           await page.mouse.move(action.x, action.y);
         } else {
-          return { error: "hover requires selector or x/y coordinates" };
+          return { kind: "error", error: "hover requires selector or x/y coordinates" };
         }
         await settle(page);
         break;
@@ -209,11 +211,12 @@ export async function executeAction(
         break;
 
       default:
-        return { error: `Unknown action: ${(action as BrowserAction).action}` };
+        return { kind: "error", error: `Unknown action: ${(action as BrowserAction).action}` };
     }
 
     const screenshot = await takeScreenshot(page);
     return {
+      kind: "result",
       screenshot,
       metadata: { url: page.url(), title: await page.title() },
     };
@@ -225,12 +228,13 @@ export async function executeAction(
     try {
       const screenshot = await takeScreenshot(page);
       return {
+        kind: "result",
         screenshot,
         metadata: { url: page.url(), title: await page.title() },
         error: message,
       };
     } catch {
-      return { error: message };
+      return { kind: "error", error: message };
     }
   }
 }
@@ -255,5 +259,5 @@ export function parseAction(text: string): BrowserAction | null {
 }
 
 export function isActionResult(result: ActionResult | ActionError): result is ActionResult {
-  return "screenshot" in result;
+  return result.kind === "result";
 }
