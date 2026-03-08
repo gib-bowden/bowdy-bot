@@ -2,14 +2,17 @@ import type { Page, Frame } from "playwright";
 import { logger } from "../../logger.js";
 
 export type BrowserAction =
-  | { action: "click"; selector?: string; x?: number; y?: number }
+  | { action: "click"; selector?: string; x?: number; y?: number; label?: number }
   | { action: "type"; selector?: string; text: string; press_enter?: boolean }
   | { action: "select"; selector: string; value?: string; label?: string }
   | { action: "scroll"; direction: "up" | "down"; amount?: number }
   | { action: "wait"; seconds?: number }
   | { action: "go_back" }
   | { action: "navigate"; url: string }
-  | { action: "screenshot" };
+  | { action: "screenshot" }
+  | { action: "hover"; selector?: string; x?: number; y?: number; label?: number }
+  | { action: "press_key"; key: string }
+  | { action: "fill"; selector: string; text: string };
 
 /**
  * Validate that a URL is safe to navigate to (no SSRF).
@@ -175,6 +178,32 @@ export async function executeAction(
         await settle(page);
         break;
 
+      case "hover":
+        if (action.selector) {
+          const selector = action.selector;
+          await tryInFrames(page, (f) => f.hover(selector, { timeout: FRAME_TIMEOUT_MS }));
+        } else if (action.x !== undefined && action.y !== undefined) {
+          await page.mouse.move(action.x, action.y);
+        } else {
+          return { error: "hover requires selector or x/y coordinates" };
+        }
+        await settle(page);
+        break;
+
+      case "press_key":
+        await page.keyboard.press(action.key);
+        if (action.key === "Enter" || action.key === "Escape" || action.key === "Tab") {
+          await settle(page);
+        }
+        break;
+
+      case "fill": {
+        const fillSelector = action.selector;
+        await tryInFrames(page, (f) => f.fill(fillSelector, action.text, { timeout: FRAME_TIMEOUT_MS }));
+        await settle(page);
+        break;
+      }
+
       case "screenshot":
         // Just take the screenshot, no other action
         break;
@@ -204,4 +233,27 @@ export async function executeAction(
       return { error: message };
     }
   }
+}
+
+export function parseAction(text: string): BrowserAction | null {
+  const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  const jsonStr = codeBlockMatch ? codeBlockMatch[1]! : null;
+
+  if (!jsonStr) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(jsonStr.trim());
+    if (parsed && typeof parsed.action === "string") {
+      return parsed as BrowserAction;
+    }
+  } catch {
+    // Not valid JSON
+  }
+  return null;
+}
+
+export function isActionResult(result: ActionResult | ActionError): result is ActionResult {
+  return "screenshot" in result;
 }

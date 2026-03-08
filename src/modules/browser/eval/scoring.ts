@@ -24,6 +24,7 @@ export interface EvalFixture {
   page_title: string;
   acceptable_actions: BrowserAction[];
   action_intent: string;
+  a11y_tree?: string;
   category?: "iframe" | "stuck" | "url_guessing" | "need_input";
   conversation_history?: ConversationTurn[];
   expected_signal?: "NEED_INPUT" | "DONE";

@@ -4,7 +4,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getClient } from "../../../ai/client.js";
-import { parseAction, buildSystemPrompt, DEFAULT_BROWSER_MODEL } from "../agent.js";
+import { parseAction } from "../actions.js";
+import { ACTOR_SYSTEM_PROMPT, ACTOR_MODEL } from "../actor.js";
 import {
   scoreAction,
   scoreIntent,
@@ -19,7 +20,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, "fixtures");
 const RESULTS_DIR = join(__dirname, "results");
 
-const MODEL = process.env["EVAL_MODEL"] || DEFAULT_BROWSER_MODEL;
+const MODEL = process.env["EVAL_MODEL"] || ACTOR_MODEL;
 const EVAL_RUNS = parseInt(process.env["EVAL_RUNS"] || "1", 10);
 
 function loadFixtures(): EvalFixture[] {
@@ -87,31 +88,33 @@ async function evalSingleTurn(
     }
   }
 
-  // Final turn: current screenshot + goal
-  messages.push({
-    role: "user",
-    content: [
-      {
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: "image/jpeg",
-          data: screenshotBase64,
-        },
+  // Final turn: current screenshot + optional a11y tree + sub-task
+  const userContent: Anthropic.ContentBlockParam[] = [
+    {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: "image/jpeg",
+        data: screenshotBase64,
       },
-      {
-        type: "text",
-        text: `Page: ${fixture.page_url} — ${fixture.page_title}\n\nGoal: ${fixture.goal}\n\nWhat's your next action?`,
-      },
-    ],
-  });
+    },
+  ];
+
+  let userText = `Page: ${fixture.page_url} — ${fixture.page_title}`;
+  if (fixture.a11y_tree) {
+    userText += `\n\nAccessibility tree:\n${fixture.a11y_tree}`;
+  }
+  userText += `\n\nSub-task: ${fixture.goal}\n\nWhat's your next action?`;
+
+  userContent.push({ type: "text", text: userText });
+  messages.push({ role: "user", content: userContent });
 
   const start = Date.now();
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 1024,
     temperature: 0,
-    system: buildSystemPrompt(fixture.goal),
+    system: ACTOR_SYSTEM_PROMPT,
     messages,
   });
   const durationMs = Date.now() - start;
