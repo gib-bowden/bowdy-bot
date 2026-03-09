@@ -8,7 +8,7 @@ import { executeAction, isActionResult, type BrowserAction } from "./actions.js"
 import type { SubTask, ActorResult, PageMetadata, A11yElement } from "./types.js";
 import { recordSessionTurn } from "./eval/capture.js";
 
-export const ACTOR_MODEL = process.env["ACTOR_MODEL"] || "claude-sonnet-4-6";
+export const ACTOR_MODEL = process.env["ACTOR_MODEL"] || "claude-haiku-4-5";
 const MAX_SCREENSHOTS_IN_HISTORY = 2;
 
 const RETRY_NUDGE =

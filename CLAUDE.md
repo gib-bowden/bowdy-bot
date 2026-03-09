@@ -5,7 +5,7 @@ Family AI assistant for the Bowden household — manages tasks, groceries, calen
 ## Tech Stack
 
 - **Runtime**: Node.js 22+, TypeScript, ESM (`"type": "module"`)
-- **AI**: Claude Sonnet (router + browser agent), Claude Haiku (GroupMe classifier + morning briefing)
+- **AI**: Claude Sonnet (router), Claude Haiku (browser actor, GroupMe classifier, morning briefing)
 - **Database**: SQLite via better-sqlite3 + Drizzle ORM
 - **Platforms**: Console (default), Telegram (grammy), Twilio SMS, GroupMe
 - **Browser**: Camoufox (Firefox-based, anti-detection) via playwright-core — vision-driven agent loop

@@ -3,7 +3,7 @@ import { getClient } from "../../ai/client.js";
 import type { PageMetadata, VerifierResult } from "./types.js";
 import { recordSessionTurn } from "./eval/capture.js";
 
-export const VERIFIER_MODEL = process.env["VERIFIER_MODEL"] || "claude-haiku-4-5-20251001";
+export const VERIFIER_MODEL = process.env["VERIFIER_MODEL"] || "claude-haiku-4-5";
 
 const SYSTEM_PROMPT =
   "You verify whether a browser automation step succeeded. Given a screenshot and success criteria, respond with exactly: PASS or FAIL followed by a one-line description of the current page state.";
