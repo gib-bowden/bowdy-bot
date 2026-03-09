@@ -101,21 +101,26 @@ describe("scoreAction", () => {
 });
 
 describe("scoreSignal", () => {
-  it("passes when NEED_INPUT signal is found", () => {
-    const result = scoreSignal("I can't proceed without credentials. [NEED_INPUT] What is your username?", "NEED_INPUT");
+  it("passes when need_input tool is used", () => {
+    const result = scoreSignal("need_input", "NEED_INPUT");
     expect(result.pass).toBe(true);
     expect(result.tier).toBe("exact");
   });
 
-  it("passes when DONE signal is found", () => {
-    const result = scoreSignal("[DONE] Successfully completed the task.", "DONE");
+  it("passes when task_complete tool is used", () => {
+    const result = scoreSignal("task_complete", "DONE");
     expect(result.pass).toBe(true);
   });
 
-  it("fails when expected signal is missing", () => {
-    const result = scoreSignal("I'll click the submit button next.", "NEED_INPUT");
+  it("fails when expected signal tool is not used", () => {
+    const result = scoreSignal("browser_click", "NEED_INPUT");
     expect(result.pass).toBe(false);
     expect(result.tier).toBe("fail");
+  });
+
+  it("fails when no tool is used", () => {
+    const result = scoreSignal(null, "DONE");
+    expect(result.pass).toBe(false);
   });
 });
 

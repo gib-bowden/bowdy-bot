@@ -15,7 +15,7 @@ const ROUTER_TOOLS: Anthropic.Tool[] = [
   {
     name: "dispatch_subtask",
     description:
-      "Dispatch a sub-task to the Actor for execution. The Actor can see the page elements and interact with them.",
+      "Dispatch a sub-task to the Actor for execution. The Actor can see the page and interact with it. Give action-oriented instructions (click, fill, navigate) — the Actor should make progress toward the goal, not just observe and report back.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -26,10 +26,6 @@ const ROUTER_TOOLS: Anthropic.Tool[] = [
         success_criteria: {
           type: "string",
           description: "How to verify the sub-task succeeded",
-        },
-        max_attempts: {
-          type: "number",
-          description: "Maximum attempts before escalating back",
         },
       },
       required: ["instruction", "success_criteria"],
@@ -80,8 +76,9 @@ function formatProgressLog(log: ProgressEntry[]): string {
 function buildRouterSystemPrompt(
   goal: string,
   progressLog: ProgressEntry[],
+  blockedDomains: Set<string>,
 ): string {
-  return `You are a browser automation planner. You can see the page via screenshots.
+  let prompt = `You are a browser automation planner. You can see the page via screenshots.
 
 Your goal: ${goal}
 
@@ -90,10 +87,17 @@ Use your tools to accomplish the goal:
 - signal_done: When the goal is fully accomplished
 - signal_needs_input: When you need information from the user (credentials, choices, etc.)
 
-Progress so far:
-${formatProgressLog(progressLog)}
+Guidelines:
+- Use the search engine on the current page to discover URLs before navigating. Only navigate directly to URLs you found in search results or on the current page.
+- Write action-oriented sub-task instructions — tell the Actor to DO things (click, fill, submit), not to scout and report back. The Actor should take actions toward the goal, not describe what it sees.
+- When a sub-task is escalated or failed, adapt your strategy for the next attempt. Do NOT retry the same approach.`;
 
-Provide brief reasoning before each tool call.`;
+  if (blockedDomains.size > 0) {
+    prompt += `\n\nBLOCKED DOMAINS (unreachable, do not use): ${[...blockedDomains].join(", ")}`;
+  }
+
+  prompt += `\n\nProgress so far:\n${formatProgressLog(progressLog)}\n\nProvide brief reasoning before each tool call.`;
+  return prompt;
 }
 
 function generateSubTaskId(): string {
@@ -116,6 +120,7 @@ export async function runRouterLoop(
   const progressLog: ProgressEntry[] = opts?.existingProgressLog
     ? [...opts.existingProgressLog]
     : [];
+  const blockedDomains = new Set<string>();
 
   let currentScreenshot = initialScreenshot;
   let currentMetadata = pageMetadata;
@@ -159,7 +164,7 @@ export async function runRouterLoop(
     const response = await client.messages.create({
       model: ROUTER_MODEL,
       max_tokens: 1024,
-      system: buildRouterSystemPrompt(goal, progressLog),
+      system: buildRouterSystemPrompt(goal, progressLog, blockedDomains),
       tools: ROUTER_TOOLS,
       messages,
     });
@@ -253,13 +258,11 @@ export async function runRouterLoop(
     if (toolName === "dispatch_subtask") {
       const instruction = String(toolInput["instruction"] || "");
       const successCriteria = String(toolInput["success_criteria"] || "");
-      const maxAttempts = Number(toolInput["max_attempts"]) || 5;
 
       const subTask: SubTask = {
         id: generateSubTaskId(),
         instruction,
         successCriteria,
-        maxAttempts,
       };
 
       logger.info(
@@ -281,7 +284,7 @@ export async function runRouterLoop(
         router_instruction: instruction,
       }, currentScreenshot);
 
-      const actorResult = await executeSubTask(page, subTask, currentMetadata);
+      const actorResult = await executeSubTask(page, subTask, currentMetadata, blockedDomains);
 
       if (actorResult.status === "needs_input") {
         // Bubble up to caller
@@ -303,6 +306,24 @@ export async function runRouterLoop(
         };
       }
 
+      // Actor found the URL but the site blocked our browser — send link directly to user
+      if (actorResult.status === "escalate" && actorResult.blockedUrl) {
+        progressLog.push({
+          stepNumber: progressLog.length + 1,
+          subTask: instruction,
+          outcome: "escalated",
+          stateDescription: actorResult.reason,
+          timestamp: new Date().toISOString(),
+        });
+        return {
+          result: {
+            status: "done",
+            summary: `I found the link but the site blocked our browser. Here it is: ${actorResult.blockedUrl}`,
+          },
+          progressLog,
+        };
+      }
+
       if (
         actorResult.status === "success" ||
         actorResult.status === "escalate"
@@ -319,9 +340,16 @@ export async function runRouterLoop(
             iteration,
           );
           verifiedPass = verifierResult.pass;
-          stateDescription = verifierResult.description;
+          stateDescription = verifiedPass
+            ? verifierResult.description
+            : `${verifierResult.description} (Actor reported: ${actorResult.summary})`;
         } else {
           stateDescription = actorResult.reason;
+          if (actorResult.failedDomains) {
+            for (const domain of actorResult.failedDomains) {
+              blockedDomains.add(domain);
+            }
+          }
         }
 
         const outcome: ProgressEntry["outcome"] =

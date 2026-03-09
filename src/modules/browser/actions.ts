@@ -59,6 +59,8 @@ export interface ActionResult {
   screenshot: Buffer;
   metadata: { url: string; title: string };
   error?: string;
+  unchanged?: boolean;
+  popupFailedUrl?: string;
 }
 
 export interface ActionError {
@@ -101,6 +103,12 @@ export async function executeAction(
   page: Page,
   action: BrowserAction,
 ): Promise<ActionResult | ActionError> {
+  // Capture before-state for click actions to detect "nothing changed"
+  const isClick = action.action === "click";
+  const beforeUrl = isClick ? page.url() : undefined;
+  const beforeTitle = isClick ? await page.title() : undefined;
+  let popupFailedUrl: string | undefined;
+
   try {
     switch (action.action) {
       case "navigate": {
@@ -113,7 +121,12 @@ export async function executeAction(
         break;
       }
 
-      case "click":
+      case "click": {
+        // Listen for popups (new tabs) — non-blocking, only resolves if one actually fires
+        let popupPage: Page | null = null;
+        const popupHandler = (p: Page) => { popupPage = p; };
+        page.context().on("page", popupHandler);
+
         if (action.selector) {
           const selector = action.selector;
           try {
@@ -125,10 +138,33 @@ export async function executeAction(
         } else if (action.x !== undefined && action.y !== undefined) {
           await page.mouse.click(action.x, action.y);
         } else {
+          page.context().off("page", popupHandler);
           return { kind: "error", error: "click requires selector or x/y coordinates" };
         }
+
+        page.context().off("page", popupHandler);
+
+        // If the click opened a new tab, switch to it.
+        // TODO: This works for navigational new tabs (target="_blank") but will break
+        // OAuth/payment popups (Stripe, Google sign-in) that rely on the popup's
+        // opener reference. Handle those cases once navigation-based evals are solid.
+        if (popupPage) {
+          const openedPage = popupPage as Page;
+          await openedPage.waitForLoadState("load", { timeout: 10000 }).catch(() => {});
+          const newUrl = openedPage.url();
+          await openedPage.close().catch(() => {});
+          if (newUrl && newUrl !== "about:blank") {
+            await page.goto(newUrl, { waitUntil: "load", timeout: 15000 })
+              .catch((err) => {
+                logger.warn({ err, newUrl }, "Failed to navigate to popup URL");
+                popupFailedUrl = newUrl;
+              });
+          }
+        }
+
         await settle(page);
         break;
+      }
 
       case "type":
         if (action.selector) {
@@ -215,10 +251,15 @@ export async function executeAction(
     }
 
     const screenshot = await takeScreenshot(page);
+    const afterUrl = page.url();
+    const afterTitle = await page.title();
+    const unchanged = isClick && afterUrl === beforeUrl && afterTitle === beforeTitle;
     return {
       kind: "result",
       screenshot,
-      metadata: { url: page.url(), title: await page.title() },
+      metadata: { url: afterUrl, title: afterTitle },
+      ...(unchanged ? { unchanged: true } : {}),
+      ...(popupFailedUrl ? { popupFailedUrl } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -237,25 +278,6 @@ export async function executeAction(
       return { kind: "error", error: message };
     }
   }
-}
-
-export function parseAction(text: string): BrowserAction | null {
-  const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  const jsonStr = codeBlockMatch ? codeBlockMatch[1]! : null;
-
-  if (!jsonStr) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(jsonStr.trim());
-    if (parsed && typeof parsed.action === "string") {
-      return parsed as BrowserAction;
-    }
-  } catch {
-    // Not valid JSON
-  }
-  return null;
 }
 
 export function isActionResult(result: ActionResult | ActionError): result is ActionResult {
