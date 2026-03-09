@@ -29,9 +29,11 @@ export async function getPage(): Promise<Page> {
     });
   }
 
+  // Local binding so TS narrows after the null-check above
+  const b = browser!;
   if (!page || page.isClosed()) {
-    const context = await browser!.newContext({ viewport: VIEWPORT });
-    page = await context.newPage();
+    const ctx = await b.newContext({ viewport: VIEWPORT });
+    page = await ctx.newPage();
   }
 
   resetInactivityTimer();
