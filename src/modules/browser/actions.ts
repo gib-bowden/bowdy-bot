@@ -60,6 +60,7 @@ export interface ActionResult {
   metadata: { url: string; title: string };
   error?: string;
   unchanged?: boolean;
+  popupFailedUrl?: string;
 }
 
 export interface ActionError {
@@ -106,6 +107,7 @@ export async function executeAction(
   const isClick = action.action === "click";
   const beforeUrl = isClick ? page.url() : undefined;
   const beforeTitle = isClick ? await page.title() : undefined;
+  let popupFailedUrl: string | undefined;
 
   try {
     switch (action.action) {
@@ -153,7 +155,10 @@ export async function executeAction(
           await openedPage.close().catch(() => {});
           if (newUrl && newUrl !== "about:blank") {
             await page.goto(newUrl, { waitUntil: "load", timeout: 15000 })
-              .catch((err) => logger.warn({ err, newUrl }, "Failed to navigate to popup URL"));
+              .catch((err) => {
+                logger.warn({ err, newUrl }, "Failed to navigate to popup URL");
+                popupFailedUrl = newUrl;
+              });
           }
         }
 
@@ -254,6 +259,7 @@ export async function executeAction(
       screenshot,
       metadata: { url: afterUrl, title: afterTitle },
       ...(unchanged ? { unchanged: true } : {}),
+      ...(popupFailedUrl ? { popupFailedUrl } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

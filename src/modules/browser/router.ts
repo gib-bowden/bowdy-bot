@@ -15,7 +15,7 @@ const ROUTER_TOOLS: Anthropic.Tool[] = [
   {
     name: "dispatch_subtask",
     description:
-      "Dispatch a sub-task to the Actor for execution. The Actor can see the page elements and interact with them.",
+      "Dispatch a sub-task to the Actor for execution. The Actor can see the page and interact with it. Give action-oriented instructions (click, fill, navigate) — the Actor should make progress toward the goal, not just observe and report back.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -89,8 +89,8 @@ Use your tools to accomplish the goal:
 
 Guidelines:
 - Use the search engine on the current page to discover URLs before navigating. Only navigate directly to URLs you found in search results or on the current page.
-- When a sub-task is escalated or failed, adapt your strategy for the next attempt. Do NOT retry the same approach — try a different website or method.
-- If multiple attempts to reach a site have failed, try alternative platforms (e.g. if OpenTable is blocked, try Resy or the restaurant's direct booking).`;
+- Write action-oriented sub-task instructions — tell the Actor to DO things (click, fill, submit), not to scout and report back. The Actor should take actions toward the goal, not describe what it sees.
+- When a sub-task is escalated or failed, adapt your strategy for the next attempt. Do NOT retry the same approach.`;
 
   if (blockedDomains.size > 0) {
     prompt += `\n\nBLOCKED DOMAINS (unreachable, do not use): ${[...blockedDomains].join(", ")}`;
@@ -284,7 +284,7 @@ export async function runRouterLoop(
         router_instruction: instruction,
       }, currentScreenshot);
 
-      const actorResult = await executeSubTask(page, subTask, currentMetadata);
+      const actorResult = await executeSubTask(page, subTask, currentMetadata, blockedDomains);
 
       if (actorResult.status === "needs_input") {
         // Bubble up to caller
@@ -306,6 +306,24 @@ export async function runRouterLoop(
         };
       }
 
+      // Actor found the URL but the site blocked our browser — send link directly to user
+      if (actorResult.status === "escalate" && actorResult.blockedUrl) {
+        progressLog.push({
+          stepNumber: progressLog.length + 1,
+          subTask: instruction,
+          outcome: "escalated",
+          stateDescription: actorResult.reason,
+          timestamp: new Date().toISOString(),
+        });
+        return {
+          result: {
+            status: "done",
+            summary: `I found the link but the site blocked our browser. Here it is: ${actorResult.blockedUrl}`,
+          },
+          progressLog,
+        };
+      }
+
       if (
         actorResult.status === "success" ||
         actorResult.status === "escalate"
@@ -322,14 +340,14 @@ export async function runRouterLoop(
             iteration,
           );
           verifiedPass = verifierResult.pass;
-          stateDescription = verifierResult.description;
+          stateDescription = verifiedPass
+            ? verifierResult.description
+            : `${verifierResult.description} (Actor reported: ${actorResult.summary})`;
         } else {
           stateDescription = actorResult.reason;
-          // Extract blocked domains from escalation reason
-          const blockedMatch = actorResult.reason.match(/blocked domains: (.+)\)/);
-          if (blockedMatch) {
-            for (const domain of blockedMatch[1]!.split(", ")) {
-              blockedDomains.add(domain.trim());
+          if (actorResult.failedDomains) {
+            for (const domain of actorResult.failedDomains) {
+              blockedDomains.add(domain);
             }
           }
         }

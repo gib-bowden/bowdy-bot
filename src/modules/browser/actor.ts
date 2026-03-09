@@ -4,7 +4,7 @@ import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
 import { getInteractiveElements, formatA11yTree } from "./a11y.js";
 import { captureWithLabels } from "./set-of-mark.js";
-import { executeAction, isActionResult, type BrowserAction, type ActionResult } from "./actions.js";
+import { executeAction, isActionResult, type BrowserAction } from "./actions.js";
 import type { SubTask, ActorResult, PageMetadata, A11yElement } from "./types.js";
 import { recordSessionTurn } from "./eval/capture.js";
 
@@ -13,6 +13,11 @@ const MAX_SCREENSHOTS_IN_HISTORY = 2;
 
 const RETRY_NUDGE =
   "You have failed multiple actions in a row. Try a completely different approach: use x/y coordinates instead of selectors, use keyboard navigation (Tab/Enter), or use the need_input tool to ask the user for help.";
+
+/** Detect errors that indicate a site is actively blocking our headless browser */
+function isBlockingError(error: string): boolean {
+  return /ERR_HTTP2_PROTOCOL_ERROR|ERR_CONNECTION_RESET|ERR_SSL_PROTOCOL_ERROR|403 Forbidden/i.test(error);
+}
 
 export const ACTOR_TOOLS: Anthropic.Tool[] = [
   {
@@ -271,13 +276,14 @@ export async function executeSubTask(
   page: Page,
   subTask: SubTask,
   initialMetadata: PageMetadata,
+  blockedDomains?: Set<string>,
 ): Promise<ActorResult> {
   const client = getClient();
   const maxAttempts = subTask.maxAttempts || 8;
   const messages: Anthropic.MessageParam[] = [];
   let consecutiveErrors = 0;
   let actionsAttempted = 0;
-  const failedDomains = new Set<string>();
+  const failedDomains = new Set<string>(blockedDomains);
 
   // Build initial user message with screenshot + a11y tree
   let elements: A11yElement[];
@@ -485,10 +491,32 @@ export async function executeSubTask(
           reason: resolved.error,
           screenshot,
           metadata,
+          ...(failedDomains.size > 0 ? { failedDomains: [...failedDomains] } : {}),
         };
       }
       actionsAttempted++;
       continue;
+    }
+
+    // Reject navigate to known-blocked domains immediately
+    if (resolved.action === "navigate" && resolved.url) {
+      try {
+        const domain = new URL(resolved.url).hostname;
+        if (failedDomains.has(domain)) {
+          const metadata = await getPageMetadata(page);
+          const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+          return {
+            status: "escalate",
+            reason: `${domain} is blocked — cannot navigate there`,
+            screenshot,
+            metadata,
+            blockedUrl: resolved.url,
+            failedDomains: [...failedDomains],
+          };
+        }
+      } catch {
+        // Invalid URL, let executeAction handle it
+      }
     }
 
     // Execute action
@@ -506,6 +534,20 @@ export async function executeSubTask(
           failedDomains.add(domain);
         } catch {
           // Invalid URL, ignore
+        }
+
+        // Site is blocking our browser — escalate immediately with the URL
+        if (isBlockingError(result.error)) {
+          const metadata = await getPageMetadata(page);
+          const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+          return {
+            status: "escalate",
+            reason: `${resolved.url} is blocking our browser`,
+            screenshot,
+            metadata,
+            blockedUrl: resolved.url,
+            failedDomains: [...failedDomains],
+          };
         }
       }
 
@@ -543,9 +585,10 @@ export async function executeSubTask(
         const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
         return {
           status: "escalate",
-          reason: `Action failed: ${result.error}${failedDomains.size > 0 ? ` (blocked domains: ${[...failedDomains].join(", ")})` : ""}`,
+          reason: `Action failed: ${result.error}`,
           screenshot,
           metadata,
+          ...(failedDomains.size > 0 ? { failedDomains: [...failedDomains] } : {}),
         };
       }
 
@@ -561,9 +604,52 @@ export async function executeSubTask(
       continue;
     }
 
+    // Popup opened but the target site blocked our browser — return immediately with the URL
+    if (result.popupFailedUrl) {
+      try {
+        failedDomains.add(new URL(result.popupFailedUrl).hostname);
+      } catch {
+        // Invalid URL, skip domain tracking
+      }
+      const metadata = await getPageMetadata(page);
+      const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+      return {
+        status: "escalate",
+        reason: `Click opened popup to ${result.popupFailedUrl} but the site blocked our browser`,
+        screenshot,
+        metadata,
+        blockedUrl: result.popupFailedUrl,
+        failedDomains: [...failedDomains],
+      };
+    }
+
     // Action succeeded (possibly with error)
     if (result.error) {
       consecutiveErrors++;
+
+      // Track failed domains for navigate actions (screenshot was still captured)
+      if (resolved.action === "navigate" && resolved.url) {
+        try {
+          const domain = new URL(resolved.url).hostname;
+          failedDomains.add(domain);
+        } catch {
+          // Invalid URL, ignore
+        }
+
+        // Site is blocking our browser — escalate immediately with the URL
+        if (isBlockingError(result.error)) {
+          const metadata = await getPageMetadata(page);
+          return {
+            status: "escalate",
+            reason: `${resolved.url} is blocking our browser`,
+            screenshot: result.screenshot,
+            metadata,
+            blockedUrl: resolved.url,
+            failedDomains: [...failedDomains],
+          };
+        }
+      }
+
       logger.warn(
         { actionsAttempted, error: result.error, consecutiveErrors },
         "Actor action failed (with screenshot)",
@@ -594,6 +680,7 @@ export async function executeSubTask(
         reason: `${consecutiveErrors} consecutive failures`,
         screenshot: result.screenshot,
         metadata,
+        ...(failedDomains.size > 0 ? { failedDomains: [...failedDomains] } : {}),
       };
     }
 
@@ -620,6 +707,13 @@ export async function executeSubTask(
       toolResultContent.push({
         type: "text",
         text: "The page didn't change after your click. If the link opens a new tab, try using browser_navigate with the link's href from the accessibility tree instead.",
+      });
+    }
+
+    if (failedDomains.size > 0) {
+      toolResultContent.push({
+        type: "text",
+        text: `Blocked domains (do not retry): ${[...failedDomains].join(", ")}`,
       });
     }
 
@@ -660,5 +754,6 @@ export async function executeSubTask(
     reason: `Exhausted ${actionsAttempted} actions for sub-task: ${subTask.instruction}`,
     screenshot,
     metadata,
+    ...(failedDomains.size > 0 ? { failedDomains: [...failedDomains] } : {}),
   };
 }

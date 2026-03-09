@@ -377,6 +377,121 @@ describe("executeSubTask", () => {
     expect(result.status).toBe("escalate");
   });
 
+  it("returns escalation with blockedUrl when popupFailedUrl is set", async () => {
+    setupMocks();
+    const page = mockPage();
+
+    const mockCreate = vi.fn().mockResolvedValue({
+      content: [
+        { type: "text", text: "I'll click the reservation link." },
+        { type: "tool_use", id: "toolu_1", name: "browser_click", input: { label: 1 } },
+      ],
+    });
+    vi.mocked(getClient).mockReturnValue({
+      messages: { create: mockCreate },
+    } as never);
+
+    vi.mocked(executeAction).mockResolvedValueOnce({
+      kind: "result",
+      screenshot: Buffer.from("result-screenshot"),
+      metadata: { url: "https://example.com", title: "Example" },
+      unchanged: true,
+      popupFailedUrl: "https://blocked-site.com/reserve",
+    });
+
+    const result = await executeSubTask(page, subTask, {
+      url: "https://example.com",
+      title: "Example",
+    });
+
+    // Should immediately escalate with the blocked URL — no second API call
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("escalate");
+    if (result.status === "escalate") {
+      expect(result.blockedUrl).toBe("https://blocked-site.com/reserve");
+      expect(result.reason).toContain("blocked our browser");
+    }
+  });
+
+  it("immediately escalates with blockedUrl on first navigate blocking error", async () => {
+    setupMocks();
+    const page = mockPage();
+
+    const mockCreate = vi.fn().mockResolvedValue({
+      content: [
+        { type: "text", text: "I'll navigate to OpenTable." },
+        {
+          type: "tool_use",
+          id: "toolu_1",
+          name: "browser_navigate",
+          input: { url: "https://www.opentable.com/r/folk-nashville" },
+        },
+      ],
+    });
+    vi.mocked(getClient).mockReturnValue({
+      messages: { create: mockCreate },
+    } as never);
+
+    vi.mocked(executeAction).mockResolvedValueOnce({
+      kind: "result",
+      screenshot: Buffer.from("error-screenshot"),
+      metadata: { url: "https://duckduckgo.com", title: "Search" },
+      error: "page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://www.opentable.com/r/folk-nashville",
+    });
+
+    const result = await executeSubTask(page, subTask, {
+      url: "https://duckduckgo.com",
+      title: "Search",
+    });
+
+    // Should immediately escalate — no retries, no second API call
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("escalate");
+    if (result.status === "escalate") {
+      expect(result.blockedUrl).toBe("https://www.opentable.com/r/folk-nashville");
+      expect(result.reason).toContain("blocking our browser");
+      expect(result.failedDomains).toContain("www.opentable.com");
+    }
+  });
+
+  it("immediately escalates when actor navigates to a blocked domain", async () => {
+    setupMocks();
+    const page = mockPage();
+
+    const mockCreate = vi.fn().mockResolvedValue({
+      content: [
+        { type: "text", text: "I'll navigate to OpenTable." },
+        {
+          type: "tool_use",
+          id: "toolu_1",
+          name: "browser_navigate",
+          input: { url: "https://www.opentable.com/r/folk" },
+        },
+      ],
+    });
+    vi.mocked(getClient).mockReturnValue({
+      messages: { create: mockCreate },
+    } as never);
+
+    const blockedDomains = new Set(["www.opentable.com"]);
+
+    const result = await executeSubTask(
+      page,
+      subTask,
+      { url: "https://example.com", title: "Example" },
+      blockedDomains,
+    );
+
+    // Should escalate without calling executeAction
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(result.status).toBe("escalate");
+    if (result.status === "escalate") {
+      expect(result.blockedUrl).toBe("https://www.opentable.com/r/folk");
+      expect(result.failedDomains).toContain("www.opentable.com");
+    }
+  });
+
   it("passes tools and tool_choice to API call", async () => {
     setupMocks();
     const page = mockPage();

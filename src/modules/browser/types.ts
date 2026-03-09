@@ -18,6 +18,8 @@ export type ActorResult =
       reason: string;
       screenshot: Buffer;
       metadata: PageMetadata;
+      blockedUrl?: string;
+      failedDomains?: string[];
     };
 
 export interface VerifierResult {
