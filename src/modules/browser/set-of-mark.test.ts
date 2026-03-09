@@ -37,7 +37,7 @@ describe("captureWithLabels", () => {
     ]);
 
     // Should take screenshot
-    expect(screenshotFn).toHaveBeenCalledWith({ type: "jpeg", quality: 75 });
+    expect(screenshotFn).toHaveBeenCalledWith({ type: "jpeg", quality: 50 });
 
     // Should return the screenshot buffer
     expect(result).toBeInstanceOf(Buffer);

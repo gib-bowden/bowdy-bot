@@ -71,7 +71,7 @@ export interface ActionError {
 const SETTLE_DELAY_MS = 1000;
 
 async function takeScreenshot(page: Page): Promise<Buffer> {
-  return await page.screenshot({ type: "jpeg", quality: 75 });
+  return await page.screenshot({ type: "jpeg", quality: 50 });
 }
 
 async function settle(page: Page): Promise<void> {

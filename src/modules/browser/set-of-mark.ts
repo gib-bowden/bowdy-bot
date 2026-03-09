@@ -34,12 +34,12 @@ export async function captureWithLabels(page: Page, elements: A11yElement[]): Pr
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.warn({ err: message }, "Failed to inject SoM overlays, returning plain screenshot");
-    return await page.screenshot({ type: "jpeg", quality: 75 });
+    return await page.screenshot({ type: "jpeg", quality: 50 });
   }
 
   // Take screenshot, then always remove overlays
   try {
-    const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+    const screenshot = await page.screenshot({ type: "jpeg", quality: 50 });
     return screenshot;
   } finally {
     await page.evaluate(() => {

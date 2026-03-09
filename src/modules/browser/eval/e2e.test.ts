@@ -102,7 +102,7 @@ async function runE2EScenario(
   }
   await new Promise((r) => setTimeout(r, SETTLE_MS));
 
-  let screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+  let screenshot = await page.screenshot({ type: "jpeg", quality: 50 });
   let metadata: PageMetadata = { url: page.url(), title: await page.title() };
   let opts: RouterLoopOpts | undefined;
 
@@ -123,7 +123,7 @@ async function runE2EScenario(
     if (result.status === "done") {
       const finalScreenshot = await page.screenshot({
         type: "jpeg",
-        quality: 75,
+        quality: 50,
       });
       saveScreenshot(
         scenario.id,
@@ -158,7 +158,7 @@ async function runE2EScenario(
     // needs_input
     const questionScreenshot = await page.screenshot({
       type: "jpeg",
-      quality: 75,
+      quality: 50,
     });
     saveScreenshot(
       scenario.id,
@@ -195,7 +195,7 @@ async function runE2EScenario(
     const userResponse =
       match.response ?? "I'm not sure, use your best judgment.";
 
-    screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+    screenshot = await page.screenshot({ type: "jpeg", quality: 50 });
     metadata = { url: page.url(), title: await page.title() };
     opts = { existingProgressLog: progressLog, userResponse };
   }
