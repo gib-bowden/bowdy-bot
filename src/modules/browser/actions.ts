@@ -1,4 +1,4 @@
-import type { Page, Frame } from "playwright";
+import type { Page, Frame } from "playwright-core";
 import { logger } from "../../logger.js";
 
 export type BrowserAction =
@@ -70,8 +70,8 @@ export interface ActionError {
 
 const SETTLE_DELAY_MS = 1000;
 
-async function takeScreenshot(page: Page): Promise<Buffer> {
-  return await page.screenshot({ type: "jpeg", quality: 75 });
+export async function takeScreenshot(page: Page): Promise<Buffer> {
+  return await page.screenshot({ type: "jpeg", quality: 50 });
 }
 
 async function settle(page: Page): Promise<void> {
@@ -228,12 +228,15 @@ export async function executeAction(
         await settle(page);
         break;
 
-      case "press_key":
-        await page.keyboard.press(action.key);
-        if (action.key === "Enter" || action.key === "Escape" || action.key === "Tab") {
+      case "press_key": {
+        const KEY_ALIASES: Record<string, string> = { Return: "Enter", Esc: "Escape" };
+        const resolvedKey = KEY_ALIASES[action.key] || action.key;
+        await page.keyboard.press(resolvedKey);
+        if (resolvedKey === "Enter" || resolvedKey === "Escape" || resolvedKey === "Tab") {
           await settle(page);
         }
         break;
+      }
 
       case "fill": {
         const fillSelector = action.selector;

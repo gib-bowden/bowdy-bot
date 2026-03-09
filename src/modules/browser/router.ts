@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Page } from "playwright";
+import type { Page } from "playwright-core";
 import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
 import { executeSubTask } from "./actor.js";
@@ -78,7 +78,17 @@ function buildRouterSystemPrompt(
   progressLog: ProgressEntry[],
   blockedDomains: Set<string>,
 ): string {
-  let prompt = `You are a browser automation planner. You can see the page via screenshots.
+  const today = new Date();
+  const dateStr = today.toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  let prompt = `You are a browser automation planner. You receive the current page URL/title and a progress log. On the first iteration and after failures, you also receive a screenshot.
+
+Today is ${dateStr}.
 
 Your goal: ${goal}
 
@@ -90,7 +100,8 @@ Use your tools to accomplish the goal:
 Guidelines:
 - Use the search engine on the current page to discover URLs before navigating. Only navigate directly to URLs you found in search results or on the current page.
 - Write action-oriented sub-task instructions — tell the Actor to DO things (click, fill, submit), not to scout and report back. The Actor should take actions toward the goal, not describe what it sees.
-- When a sub-task is escalated or failed, adapt your strategy for the next attempt. Do NOT retry the same approach.`;
+- When a sub-task is escalated or failed, adapt your strategy for the next attempt. Do NOT retry the same approach.
+- Always resolve relative dates (e.g. "this Friday", "tomorrow") to concrete dates in sub-task instructions so the Actor knows exactly what to select.`;
 
   if (blockedDomains.size > 0) {
     prompt += `\n\nBLOCKED DOMAINS (unreachable, do not use): ${[...blockedDomains].join(", ")}`;
@@ -136,29 +147,35 @@ export async function runRouterLoop(
     });
   }
 
+  let lastOutcome: "success" | "failed" | "escalated" | null = null;
+
   for (let iteration = 0; iteration < MAX_ROUTER_ITERATIONS; iteration++) {
     logger.info({ iteration, goal }, "Router iteration");
 
+    // Send screenshot on first iteration and after failed/escalated subtasks.
+    // After successful subtasks, the verifier's text description in the progress log is sufficient.
+    const includeScreenshot = iteration === 0 || lastOutcome !== "success";
+
     // Intentionally single-turn per iteration — no multi-turn tool_use conversation.
     // Continuity is maintained via the progress log in the system prompt.
+    const userContent: Anthropic.ContentBlockParam[] = [];
+    if (includeScreenshot) {
+      userContent.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/jpeg",
+          data: currentScreenshot.toString("base64"),
+        },
+      });
+    }
+    userContent.push({
+      type: "text",
+      text: `Page: ${currentMetadata.url} — ${currentMetadata.title}`,
+    });
+
     const messages: Anthropic.MessageParam[] = [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: "image/jpeg",
-              data: currentScreenshot.toString("base64"),
-            },
-          },
-          {
-            type: "text",
-            text: `Page: ${currentMetadata.url} — ${currentMetadata.title}`,
-          },
-        ],
-      },
+      { role: "user", content: userContent },
     ];
 
     const response = await client.messages.create({
@@ -370,6 +387,8 @@ export async function runRouterLoop(
         // Update current screenshot/metadata for next iteration
         currentScreenshot = actorResult.screenshot;
         currentMetadata = actorResult.metadata;
+
+        lastOutcome = outcome;
 
         logger.info(
           { iteration, outcome, stateDescription: stateDescription.slice(0, 200) },

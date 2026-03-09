@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { getClient } from "../../../ai/client.js";
 import type { ProgressEntry } from "../types.js";
 
-const MATCHER_MODEL = "claude-haiku-4-5-20251001";
+const MATCHER_MODEL = "claude-haiku-4-5";
 const GRADER_MODEL = "claude-sonnet-4-6";
 
 // ── Scenario types ──────────────────────────────────────────────

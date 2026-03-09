@@ -5,10 +5,10 @@ Family AI assistant for the Bowden household — manages tasks, groceries, calen
 ## Tech Stack
 
 - **Runtime**: Node.js 22+, TypeScript, ESM (`"type": "module"`)
-- **AI**: Claude Sonnet (router + browser agent), Claude Haiku (GroupMe classifier + morning briefing)
+- **AI**: Claude Sonnet (router), Claude Haiku (browser actor, GroupMe classifier, morning briefing)
 - **Database**: SQLite via better-sqlite3 + Drizzle ORM
 - **Platforms**: Console (default), Telegram (grammy), Twilio SMS, GroupMe
-- **Browser**: Playwright (headless Chromium) — vision-driven agent loop
+- **Browser**: Camoufox (Firefox-based, anti-detection) via playwright-core — vision-driven agent loop
 - **APIs**: Google Calendar, Google Tasks, Gmail, Kroger, Anthropic Skills
 
 ## Project Structure
@@ -29,10 +29,10 @@ src/
     kroger/             # Product search, cart sync, product preferences
     calendar/           # Google Calendar (list, create, delete events)
     gmail/              # Email triage (scan, classify, action buttons)
-    browser/            # Playwright web automation
+    browser/            # Camoufox web automation
       agent.ts          # Vision agent loop, busy lock, conversation state
       actions.ts        # Action executor + URL validation (SSRF protection)
-      session.ts        # Chromium lifecycle (lazy launch, inactivity timeout)
+      session.ts        # Camoufox lifecycle (lazy launch, inactivity timeout)
       eval/             # Eval system — see eval/eval.test.ts for details
     reminders/          # SQLite + node-schedule
     chat/               # Fallback (no tools)

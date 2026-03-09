@@ -13,7 +13,9 @@ function optional(key: string, defaultValue: string): string {
 }
 
 export const config = {
-  anthropicApiKey: required("ANTHROPIC_API_KEY"),
+  get anthropicApiKey(): string {
+    return required("ANTHROPIC_API_KEY");
+  },
   platform: optional("PLATFORM", "console") as
     | "console"
     | "telegram"

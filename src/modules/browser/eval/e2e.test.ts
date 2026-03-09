@@ -1,11 +1,19 @@
 import { describe, it, expect, afterAll, beforeAll } from "vitest";
-import { readFileSync, readdirSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  readFileSync,
+  readdirSync,
+  existsSync,
+  writeFileSync,
+  mkdirSync,
+} from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium, type Browser, type Page } from "playwright";
+import { Camoufox } from "camoufox-js";
+import type { Browser, Page } from "playwright-core";
 import { runRouterLoop, ROUTER_MODEL } from "../router.js";
 import type { RouterLoopOpts } from "../router.js";
 import type { ProgressEntry, PageMetadata } from "../types.js";
+import { takeScreenshot } from "../actions.js";
 import {
   matchInputs,
   scoreQuestionQuality,
@@ -35,8 +43,16 @@ function loadScenarios(): E2EScenario[] {
     .filter((f) => f.endsWith(".json"))
     .filter((f) => !filter || f.match(new RegExp(filter.replace(/\*/g, ".*"))))
     .map((f) => {
-      const raw = JSON.parse(readFileSync(join(SCENARIOS_DIR, f), "utf-8")) as E2EScenario;
-      for (const field of ["id", "goal", "startUrl", "specificity", "inputs"] as const) {
+      const raw = JSON.parse(
+        readFileSync(join(SCENARIOS_DIR, f), "utf-8"),
+      ) as E2EScenario;
+      for (const field of [
+        "id",
+        "goal",
+        "startUrl",
+        "specificity",
+        "inputs",
+      ] as const) {
         if (!(field in raw) || raw[field] == null) {
           throw new Error(`Scenario ${f} is missing required field: ${field}`);
         }
@@ -51,13 +67,20 @@ function ensureDir(dir: string): void {
   }
 }
 
-function saveScreenshot(scenarioId: string, label: string, screenshot: Buffer): void {
+function saveScreenshot(
+  scenarioId: string,
+  label: string,
+  screenshot: Buffer,
+): void {
   const dir = join(SCREENSHOTS_DIR, scenarioId);
   ensureDir(dir);
   writeFileSync(join(dir, `${label}.jpg`), screenshot);
 }
 
-async function runE2EScenario(page: Page, scenario: E2EScenario): Promise<E2EResult> {
+async function runE2EScenario(
+  page: Page,
+  scenario: E2EScenario,
+): Promise<E2EResult> {
   const startTime = Date.now();
   const turns: E2ETurn[] = [];
   const usedKeys = new Set<string>();
@@ -69,39 +92,69 @@ async function runE2EScenario(page: Page, scenario: E2EScenario): Promise<E2ERes
     await page.goto(scenario.startUrl, { waitUntil: "load", timeout: 15000 });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return await buildResult(scenario, "site_error", turns, progressLog, startTime, msg);
+    return await buildResult(
+      scenario,
+      "site_error",
+      turns,
+      progressLog,
+      startTime,
+      msg,
+    );
   }
   await new Promise((r) => setTimeout(r, SETTLE_MS));
 
-  let screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+  let screenshot = await takeScreenshot(page);
   let metadata: PageMetadata = { url: page.url(), title: await page.title() };
   let opts: RouterLoopOpts | undefined;
 
   saveScreenshot(scenario.id, "00_initial", screenshot);
 
   for (let turn = 0; turn < maxTurns; turn++) {
-    const loopResult = await runRouterLoop(page, scenario.goal, screenshot, metadata, opts);
+    const loopResult = await runRouterLoop(
+      page,
+      scenario.goal,
+      screenshot,
+      metadata,
+      opts,
+    );
     progressLog = loopResult.progressLog;
 
     const result = loopResult.result;
 
     if (result.status === "done") {
-      const finalScreenshot = await page.screenshot({ type: "jpeg", quality: 75 });
-      saveScreenshot(scenario.id, `${String(turn + 1).padStart(2, "0")}_done`, finalScreenshot);
+      const finalScreenshot = await takeScreenshot(page);
+      saveScreenshot(
+        scenario.id,
+        `${String(turn + 1).padStart(2, "0")}_done`,
+        finalScreenshot,
+      );
 
       return await buildResult(scenario, "done", turns, progressLog, startTime);
     }
 
     if (result.status === "max_iterations") {
-      return await buildResult(scenario, "max_iterations", turns, progressLog, startTime);
+      return await buildResult(
+        scenario,
+        "max_iterations",
+        turns,
+        progressLog,
+        startTime,
+      );
     }
 
     if (result.status === "error") {
-      return await buildResult(scenario, "error", turns, progressLog, startTime, result.error);
+      return await buildResult(
+        scenario,
+        "error",
+        turns,
+        progressLog,
+        startTime,
+        result.error,
+      );
     }
 
     // needs_input
-    const questionScreenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+    const questionScreenshot = await takeScreenshot(page);
     saveScreenshot(
       scenario.id,
       `${String(turn + 1).padStart(2, "0")}_needs_input`,
@@ -124,19 +177,31 @@ async function runE2EScenario(page: Page, scenario: E2EScenario): Promise<E2ERes
     }
 
     if (match.isTerminal) {
-      return await buildResult(scenario, "terminal_reached", turns, progressLog, startTime);
+      return await buildResult(
+        scenario,
+        "terminal_reached",
+        turns,
+        progressLog,
+        startTime,
+      );
     }
 
     // Provide the response and continue
     const userResponse =
       match.response ?? "I'm not sure, use your best judgment.";
 
-    screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+    screenshot = await takeScreenshot(page);
     metadata = { url: page.url(), title: await page.title() };
     opts = { existingProgressLog: progressLog, userResponse };
   }
 
-  return await buildResult(scenario, "max_turns", turns, progressLog, startTime);
+  return await buildResult(
+    scenario,
+    "max_turns",
+    turns,
+    progressLog,
+    startTime,
+  );
 }
 
 async function buildResult(
@@ -196,7 +261,10 @@ describe("E2E browser evals", () => {
   }
 
   beforeAll(async () => {
-    browser = await chromium.launch({ headless: true });
+    browser = await Camoufox({
+      headless: false,
+      window: [1280, 720],
+    });
   });
 
   afterAll(async () => {
@@ -225,7 +293,9 @@ describe("E2E browser evals", () => {
       console.log(
         `\n[${emoji}] ${r.scenarioId} (${r.status}) — overall: ${r.scorecard.overall}/100`,
       );
-      console.log(`  Terminal: ${r.scorecard.terminalReached.pass ? "yes" : "NO"}`);
+      console.log(
+        `  Terminal: ${r.scorecard.terminalReached.pass ? "yes" : "NO"}`,
+      );
       console.log(
         `  Questions: ${r.scorecard.questionQuality.score}/${r.scorecard.questionQuality.maxScore}`,
       );
@@ -280,7 +350,9 @@ describe("E2E browser evals", () => {
       `${scenario.id}: navigates to terminal state`,
       { timeout: DEFAULT_TIMEOUT_MS, retry: 1 },
       async () => {
-        const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+        const page = await browser.newPage({
+          viewport: { width: 1280, height: 720 },
+        });
         try {
           const result = await runE2EScenario(page, scenario);
           allResults.push(result);

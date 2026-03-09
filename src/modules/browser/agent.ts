@@ -1,6 +1,6 @@
 import { logger } from "../../logger.js";
 import { getPage } from "./session.js";
-import { validateUrl } from "./actions.js";
+import { validateUrl, takeScreenshot } from "./actions.js";
 import { startSession, endSession } from "./eval/capture.js";
 import { runRouterLoop, ROUTER_MODEL } from "./router.js";
 import type { ProgressEntry, PageMetadata } from "./types.js";
@@ -70,7 +70,7 @@ export async function startBrowserTask(url: string, goal: string): Promise<Brows
     await page.goto(url, { waitUntil: "load", timeout: 15000 });
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+    const screenshot = await takeScreenshot(page);
     const pageTitle = await page.title();
 
     startSession({
@@ -113,7 +113,7 @@ export async function continueBrowserTask(userResponse: string): Promise<Browser
   const page = await getPage();
 
   try {
-    const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+    const screenshot = await takeScreenshot(page);
     const pageMetadata: PageMetadata = {
       url: page.url(),
       title: await page.title(),

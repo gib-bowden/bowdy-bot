@@ -80,7 +80,7 @@ describe("verify", () => {
 
     expect(mockCreate).toHaveBeenCalledOnce();
     const call = mockCreate.mock.calls[0]![0];
-    expect(call.model).toBe("claude-haiku-4-5-20251001");
+    expect(call.model).toBe("claude-haiku-4-5");
     expect(call.max_tokens).toBe(128);
     expect(call.temperature).toBe(0);
   });

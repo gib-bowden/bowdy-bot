@@ -1,14 +1,14 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Page } from "playwright";
+import type { Page } from "playwright-core";
 import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
 import { getInteractiveElements, formatA11yTree } from "./a11y.js";
 import { captureWithLabels } from "./set-of-mark.js";
-import { executeAction, isActionResult, type BrowserAction } from "./actions.js";
+import { executeAction, isActionResult, takeScreenshot, type BrowserAction } from "./actions.js";
 import type { SubTask, ActorResult, PageMetadata, A11yElement } from "./types.js";
 import { recordSessionTurn } from "./eval/capture.js";
 
-export const ACTOR_MODEL = process.env["ACTOR_MODEL"] || "claude-sonnet-4-6";
+export const ACTOR_MODEL = process.env["ACTOR_MODEL"] || "claude-haiku-4-5";
 const MAX_SCREENSHOTS_IN_HISTORY = 2;
 
 const RETRY_NUDGE =
@@ -295,7 +295,7 @@ export async function executeSubTask(
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err: message }, "Failed to extract interactive elements");
     const metadata = await getPageMetadata(page);
-    const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+    const screenshot = await takeScreenshot(page);
     return {
       status: "escalate",
       reason: `Failed to extract interactive elements: ${message}`,
@@ -374,7 +374,7 @@ export async function executeSubTask(
     if (toolName === "task_complete") {
       const summary = String(toolInput["summary"] || "Sub-task completed");
       const metadata = await getPageMetadata(page);
-      const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+      const screenshot = await takeScreenshot(page);
 
       // Reject task_complete if the page is in an error state
       const isErrorPage = metadata.url.startsWith("chrome-error://") || metadata.url === "about:blank";
@@ -485,7 +485,7 @@ export async function executeSubTask(
 
       if (consecutiveErrors >= 4) {
         const metadata = await getPageMetadata(page);
-        const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+        const screenshot = await takeScreenshot(page);
         return {
           status: "escalate",
           reason: resolved.error,
@@ -504,7 +504,7 @@ export async function executeSubTask(
         const domain = new URL(resolved.url).hostname;
         if (failedDomains.has(domain)) {
           const metadata = await getPageMetadata(page);
-          const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+          const screenshot = await takeScreenshot(page);
           return {
             status: "escalate",
             reason: `${domain} is blocked — cannot navigate there`,
@@ -539,7 +539,7 @@ export async function executeSubTask(
         // Site is blocking our browser — escalate immediately with the URL
         if (isBlockingError(result.error)) {
           const metadata = await getPageMetadata(page);
-          const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+          const screenshot = await takeScreenshot(page);
           return {
             status: "escalate",
             reason: `${resolved.url} is blocking our browser`,
@@ -582,7 +582,7 @@ export async function executeSubTask(
 
       if (consecutiveErrors >= 4) {
         const metadata = await getPageMetadata(page);
-        const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+        const screenshot = await takeScreenshot(page);
         return {
           status: "escalate",
           reason: `Action failed: ${result.error}`,
@@ -612,7 +612,7 @@ export async function executeSubTask(
         // Invalid URL, skip domain tracking
       }
       const metadata = await getPageMetadata(page);
-      const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+      const screenshot = await takeScreenshot(page);
       return {
         status: "escalate",
         reason: `Click opened popup to ${result.popupFailedUrl} but the site blocked our browser`,
@@ -692,7 +692,7 @@ export async function executeSubTask(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.warn({ err: message }, "Failed to refresh a11y tree, falling back to previous elements");
-      newLabeledScreenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+      newLabeledScreenshot = await takeScreenshot(page);
     }
     const newA11yTree = formatA11yTree(currentElements);
     const metadata = await getPageMetadata(page);
@@ -748,7 +748,7 @@ export async function executeSubTask(
 
   // Exhausted max attempts
   const metadata = await getPageMetadata(page);
-  const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+  const screenshot = await takeScreenshot(page);
   return {
     status: "escalate",
     reason: `Exhausted ${actionsAttempted} actions for sub-task: ${subTask.instruction}`,
