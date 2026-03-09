@@ -14,6 +14,7 @@ vi.mock("./set-of-mark.js", () => ({
 vi.mock("./actions.js", () => ({
   executeAction: vi.fn(),
   isActionResult: vi.fn((result: unknown) => typeof result === "object" && result !== null && (result as Record<string, unknown>).kind === "result"),
+  takeScreenshot: vi.fn().mockResolvedValue(Buffer.from("screenshot")),
 }));
 
 import { resolveLabel, toolToBrowserAction, executeSubTask } from "./actor.js";

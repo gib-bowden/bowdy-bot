@@ -1,5 +1,6 @@
 import type { Page } from "playwright-core";
 import { logger } from "../../logger.js";
+import { takeScreenshot } from "./actions.js";
 import type { A11yElement } from "./types.js";
 
 export async function captureWithLabels(page: Page, elements: A11yElement[]): Promise<Buffer> {
@@ -34,12 +35,12 @@ export async function captureWithLabels(page: Page, elements: A11yElement[]): Pr
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.warn({ err: message }, "Failed to inject SoM overlays, returning plain screenshot");
-    return await page.screenshot({ type: "jpeg", quality: 50 });
+    return await takeScreenshot(page);
   }
 
   // Take screenshot, then always remove overlays
   try {
-    const screenshot = await page.screenshot({ type: "jpeg", quality: 50 });
+    const screenshot = await takeScreenshot(page);
     return screenshot;
   } finally {
     await page.evaluate(() => {

@@ -13,6 +13,7 @@ import type { Browser, Page } from "playwright-core";
 import { runRouterLoop, ROUTER_MODEL } from "../router.js";
 import type { RouterLoopOpts } from "../router.js";
 import type { ProgressEntry, PageMetadata } from "../types.js";
+import { takeScreenshot } from "../actions.js";
 import {
   matchInputs,
   scoreQuestionQuality,
@@ -102,7 +103,7 @@ async function runE2EScenario(
   }
   await new Promise((r) => setTimeout(r, SETTLE_MS));
 
-  let screenshot = await page.screenshot({ type: "jpeg", quality: 50 });
+  let screenshot = await takeScreenshot(page);
   let metadata: PageMetadata = { url: page.url(), title: await page.title() };
   let opts: RouterLoopOpts | undefined;
 
@@ -121,10 +122,7 @@ async function runE2EScenario(
     const result = loopResult.result;
 
     if (result.status === "done") {
-      const finalScreenshot = await page.screenshot({
-        type: "jpeg",
-        quality: 50,
-      });
+      const finalScreenshot = await takeScreenshot(page);
       saveScreenshot(
         scenario.id,
         `${String(turn + 1).padStart(2, "0")}_done`,
@@ -156,10 +154,7 @@ async function runE2EScenario(
     }
 
     // needs_input
-    const questionScreenshot = await page.screenshot({
-      type: "jpeg",
-      quality: 50,
-    });
+    const questionScreenshot = await takeScreenshot(page);
     saveScreenshot(
       scenario.id,
       `${String(turn + 1).padStart(2, "0")}_needs_input`,
@@ -195,7 +190,7 @@ async function runE2EScenario(
     const userResponse =
       match.response ?? "I'm not sure, use your best judgment.";
 
-    screenshot = await page.screenshot({ type: "jpeg", quality: 50 });
+    screenshot = await takeScreenshot(page);
     metadata = { url: page.url(), title: await page.title() };
     opts = { existingProgressLog: progressLog, userResponse };
   }
