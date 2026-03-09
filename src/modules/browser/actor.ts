@@ -16,7 +16,7 @@ const RETRY_NUDGE =
 
 /** Detect errors that indicate a site is actively blocking our headless browser */
 function isBlockingError(error: string): boolean {
-  return /ERR_HTTP2_PROTOCOL_ERROR|ERR_CONNECTION_RESET|ERR_SSL_PROTOCOL_ERROR|403 Forbidden/i.test(error);
+  return /ERR_HTTP2_PROTOCOL_ERROR|ERR_CONNECTION_RESET|ERR_SSL_PROTOCOL_ERROR|403 Forbidden|Target page, context or browser has been closed|browser has been closed|Browser closed/i.test(error);
 }
 
 export const ACTOR_TOOLS: Anthropic.Tool[] = [
@@ -272,6 +272,17 @@ async function getPageMetadata(page: Page): Promise<PageMetadata> {
   };
 }
 
+/** Safe screenshot + metadata for escalation paths where the browser may be dead */
+async function safeEscalationState(page: Page): Promise<{ screenshot: Buffer | null; metadata: PageMetadata }> {
+  try {
+    const screenshot = await takeScreenshot(page);
+    const metadata = await getPageMetadata(page);
+    return { screenshot, metadata };
+  } catch {
+    return { screenshot: null, metadata: { url: "unknown", title: "Browser crashed" } };
+  }
+}
+
 export async function executeSubTask(
   page: Page,
   subTask: SubTask,
@@ -484,8 +495,7 @@ export async function executeSubTask(
       });
 
       if (consecutiveErrors >= 4) {
-        const metadata = await getPageMetadata(page);
-        const screenshot = await takeScreenshot(page);
+        const { screenshot, metadata } = await safeEscalationState(page);
         return {
           status: "escalate",
           reason: resolved.error,
@@ -503,8 +513,7 @@ export async function executeSubTask(
       try {
         const domain = new URL(resolved.url).hostname;
         if (failedDomains.has(domain)) {
-          const metadata = await getPageMetadata(page);
-          const screenshot = await takeScreenshot(page);
+          const { screenshot, metadata } = await safeEscalationState(page);
           return {
             status: "escalate",
             reason: `${domain} is blocked — cannot navigate there`,
@@ -538,8 +547,7 @@ export async function executeSubTask(
 
         // Site is blocking our browser — escalate immediately with the URL
         if (isBlockingError(result.error)) {
-          const metadata = await getPageMetadata(page);
-          const screenshot = await takeScreenshot(page);
+          const { screenshot, metadata } = await safeEscalationState(page);
           return {
             status: "escalate",
             reason: `${resolved.url} is blocking our browser`,
@@ -581,8 +589,7 @@ export async function executeSubTask(
       }
 
       if (consecutiveErrors >= 4) {
-        const metadata = await getPageMetadata(page);
-        const screenshot = await takeScreenshot(page);
+        const { screenshot, metadata } = await safeEscalationState(page);
         return {
           status: "escalate",
           reason: `Action failed: ${result.error}`,
@@ -611,8 +618,7 @@ export async function executeSubTask(
       } catch {
         // Invalid URL, skip domain tracking
       }
-      const metadata = await getPageMetadata(page);
-      const screenshot = await takeScreenshot(page);
+      const { screenshot, metadata } = await safeEscalationState(page);
       return {
         status: "escalate",
         reason: `Click opened popup to ${result.popupFailedUrl} but the site blocked our browser`,
@@ -638,7 +644,7 @@ export async function executeSubTask(
 
         // Site is blocking our browser — escalate immediately with the URL
         if (isBlockingError(result.error)) {
-          const metadata = await getPageMetadata(page);
+          const { metadata } = await safeEscalationState(page);
           return {
             status: "escalate",
             reason: `${resolved.url} is blocking our browser`,
@@ -747,8 +753,7 @@ export async function executeSubTask(
   }
 
   // Exhausted max attempts
-  const metadata = await getPageMetadata(page);
-  const screenshot = await takeScreenshot(page);
+  const { screenshot, metadata } = await safeEscalationState(page);
   return {
     status: "escalate",
     reason: `Exhausted ${actionsAttempted} actions for sub-task: ${subTask.instruction}`,

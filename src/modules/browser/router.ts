@@ -385,7 +385,9 @@ export async function runRouterLoop(
         });
 
         // Update current screenshot/metadata for next iteration
-        currentScreenshot = actorResult.screenshot;
+        if (actorResult.screenshot) {
+          currentScreenshot = actorResult.screenshot;
+        }
         currentMetadata = actorResult.metadata;
 
         lastOutcome = outcome;

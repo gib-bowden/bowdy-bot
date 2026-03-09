@@ -45,12 +45,28 @@ export async function closeBrowser(): Promise<void> {
     clearTimeout(inactivityTimer);
     inactivityTimer = null;
   }
-  if (page && !page.isClosed()) {
-    await page.close().catch(() => {});
+  if (page) {
+    try {
+      if (!page.isClosed()) {
+        const result = page.close();
+        if (result && typeof result.catch === "function") {
+          await result.catch(() => {});
+        }
+      }
+    } catch {
+      // page already dead
+    }
     page = null;
   }
   if (browser) {
-    await browser.close().catch(() => {});
+    try {
+      const result = browser.close();
+      if (result && typeof result.catch === "function") {
+        await result.catch(() => {});
+      }
+    } catch {
+      // browser already dead
+    }
     browser = null;
   }
   logger.info("Browser closed");

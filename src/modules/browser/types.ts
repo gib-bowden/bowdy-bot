@@ -16,7 +16,7 @@ export type ActorResult =
   | {
       status: "escalate";
       reason: string;
-      screenshot: Buffer;
+      screenshot: Buffer | null;
       metadata: PageMetadata;
       blockedUrl?: string;
       failedDomains?: string[];
