@@ -2,13 +2,23 @@ export interface SubTask {
   id: string;
   instruction: string;
   successCriteria: string;
-  maxAttempts: number;
+  maxAttempts?: number;
 }
 
 export type ActorResult =
-  | { status: "success"; summary: string; screenshot: Buffer; metadata: PageMetadata }
+  | {
+      status: "success";
+      summary: string;
+      screenshot: Buffer;
+      metadata: PageMetadata;
+    }
   | { status: "needs_input"; question: string; context: string }
-  | { status: "escalate"; reason: string; screenshot: Buffer; metadata: PageMetadata };
+  | {
+      status: "escalate";
+      reason: string;
+      screenshot: Buffer;
+      metadata: PageMetadata;
+    };
 
 export interface VerifierResult {
   pass: boolean;
@@ -35,6 +45,7 @@ export interface A11yElement {
   name: string;
   locator: string;
   bounds?: { x: number; y: number; width: number; height: number };
+  href?: string;
 }
 
 export const DEFAULT_BROWSER_MODEL = "claude-sonnet-4-6";

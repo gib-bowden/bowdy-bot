@@ -3,7 +3,7 @@ import { assertUnreachable, type Module } from "../types.js";
 import { startBrowserTask, continueBrowserTask } from "./agent.js";
 
 interface BrowserTaskInput {
-  url: string;
+  url?: string;
   goal: string;
 }
 
@@ -26,7 +26,7 @@ const tools: Anthropic.Tool[] = [
       properties: {
         url: {
           type: "string",
-          description: "The URL to navigate to",
+          description: "Starting URL. Omit to start from a search engine — preferred when you don't know the exact site. Let the browser agent search and navigate to the right page.",
         },
         goal: {
           type: "string",
@@ -34,7 +34,7 @@ const tools: Anthropic.Tool[] = [
             "What to accomplish on the page. Be specific — include names, dates, times, and any details needed to complete the task.",
         },
       },
-      required: ["url", "goal"],
+      required: ["goal"],
     },
   },
   {
@@ -62,7 +62,7 @@ export const browserModule: Module<BrowserInputs> = {
   async executeTool(name, input): Promise<unknown> {
     switch (name) {
       case "browser_task": {
-        const { url, goal } = input as BrowserTaskInput;
+        const { url = "https://duckduckgo.com", goal } = input as BrowserTaskInput;
         return startBrowserTask(url, goal);
       }
       case "browser_task_continue": {

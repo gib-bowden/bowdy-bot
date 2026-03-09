@@ -27,10 +27,6 @@ const ROUTER_TOOLS: Anthropic.Tool[] = [
           type: "string",
           description: "How to verify the sub-task succeeded",
         },
-        max_attempts: {
-          type: "number",
-          description: "Maximum attempts before escalating back",
-        },
       },
       required: ["instruction", "success_criteria"],
     },
@@ -80,8 +76,9 @@ function formatProgressLog(log: ProgressEntry[]): string {
 function buildRouterSystemPrompt(
   goal: string,
   progressLog: ProgressEntry[],
+  blockedDomains: Set<string>,
 ): string {
-  return `You are a browser automation planner. You can see the page via screenshots.
+  let prompt = `You are a browser automation planner. You can see the page via screenshots.
 
 Your goal: ${goal}
 
@@ -90,10 +87,17 @@ Use your tools to accomplish the goal:
 - signal_done: When the goal is fully accomplished
 - signal_needs_input: When you need information from the user (credentials, choices, etc.)
 
-Progress so far:
-${formatProgressLog(progressLog)}
+Guidelines:
+- Use the search engine on the current page to discover URLs before navigating. Only navigate directly to URLs you found in search results or on the current page.
+- When a sub-task is escalated or failed, adapt your strategy for the next attempt. Do NOT retry the same approach — try a different website or method.
+- If multiple attempts to reach a site have failed, try alternative platforms (e.g. if OpenTable is blocked, try Resy or the restaurant's direct booking).`;
 
-Provide brief reasoning before each tool call.`;
+  if (blockedDomains.size > 0) {
+    prompt += `\n\nBLOCKED DOMAINS (unreachable, do not use): ${[...blockedDomains].join(", ")}`;
+  }
+
+  prompt += `\n\nProgress so far:\n${formatProgressLog(progressLog)}\n\nProvide brief reasoning before each tool call.`;
+  return prompt;
 }
 
 function generateSubTaskId(): string {
@@ -116,6 +120,7 @@ export async function runRouterLoop(
   const progressLog: ProgressEntry[] = opts?.existingProgressLog
     ? [...opts.existingProgressLog]
     : [];
+  const blockedDomains = new Set<string>();
 
   let currentScreenshot = initialScreenshot;
   let currentMetadata = pageMetadata;
@@ -159,7 +164,7 @@ export async function runRouterLoop(
     const response = await client.messages.create({
       model: ROUTER_MODEL,
       max_tokens: 1024,
-      system: buildRouterSystemPrompt(goal, progressLog),
+      system: buildRouterSystemPrompt(goal, progressLog, blockedDomains),
       tools: ROUTER_TOOLS,
       messages,
     });
@@ -253,13 +258,11 @@ export async function runRouterLoop(
     if (toolName === "dispatch_subtask") {
       const instruction = String(toolInput["instruction"] || "");
       const successCriteria = String(toolInput["success_criteria"] || "");
-      const maxAttempts = Number(toolInput["max_attempts"]) || 5;
 
       const subTask: SubTask = {
         id: generateSubTaskId(),
         instruction,
         successCriteria,
-        maxAttempts,
       };
 
       logger.info(
@@ -322,6 +325,13 @@ export async function runRouterLoop(
           stateDescription = verifierResult.description;
         } else {
           stateDescription = actorResult.reason;
+          // Extract blocked domains from escalation reason
+          const blockedMatch = actorResult.reason.match(/blocked domains: (.+)\)/);
+          if (blockedMatch) {
+            for (const domain of blockedMatch[1]!.split(", ")) {
+              blockedDomains.add(domain.trim());
+            }
+          }
         }
 
         const outcome: ProgressEntry["outcome"] =

@@ -162,14 +162,14 @@ export function scoreAction(
 }
 
 export function scoreSignal(
-  responseText: string,
+  toolName: string | null,
   expectedSignal: "NEED_INPUT" | "DONE",
 ): ScoreResult {
-  const tag = `[${expectedSignal}]`;
-  if (responseText.includes(tag)) {
-    return { pass: true, tier: "exact", details: `Signal ${tag} found in response` };
+  const expectedTool = expectedSignal === "DONE" ? "task_complete" : "need_input";
+  if (toolName === expectedTool) {
+    return { pass: true, tier: "exact", details: `Signal tool ${expectedTool} used` };
   }
-  return { pass: false, tier: "fail", details: `Expected signal ${tag} not found in response` };
+  return { pass: false, tier: "fail", details: `Expected signal tool ${expectedTool}, got ${toolName ?? "none"}` };
 }
 
 export function checkForbiddenActions(

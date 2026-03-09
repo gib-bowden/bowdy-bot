@@ -4,8 +4,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getClient } from "../../../ai/client.js";
-import { parseAction } from "../actions.js";
-import { ACTOR_SYSTEM_PROMPT, ACTOR_MODEL } from "../actor.js";
+import { ACTOR_SYSTEM_PROMPT, ACTOR_TOOLS, ACTOR_MODEL, toolToBrowserAction } from "../actor.js";
 import {
   scoreAction,
   scoreIntent,
@@ -116,22 +115,32 @@ async function evalSingleTurn(
     temperature: 0,
     system: ACTOR_SYSTEM_PROMPT,
     messages,
+    tools: ACTOR_TOOLS,
+    tool_choice: { type: "any" },
   });
   const durationMs = Date.now() - start;
 
-  const assistantText = response.content
+  const reasoning = response.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
     .join("\n");
 
-  const action = parseAction(assistantText);
+  // Extract action from tool_use block
+  const toolUseBlock = response.content.find(
+    (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+  );
+
+  let action = null;
+  if (toolUseBlock) {
+    action = toolToBrowserAction(toolUseBlock.name, toolUseBlock.input as Record<string, unknown>);
+  }
 
   // Score based on fixture type
   let score: ScoreResult;
 
   if (fixture.expected_signal) {
-    // Signal-based scoring (e.g., NEED_INPUT, DONE)
-    score = scoreSignal(assistantText, fixture.expected_signal);
+    // Signal-based scoring — check tool name instead of text markers
+    score = scoreSignal(toolUseBlock?.name ?? null, fixture.expected_signal);
   } else {
     // Action-based scoring: try exact/type match first, then LLM intent grader
     score = scoreAction(action, fixture.acceptable_actions);
@@ -161,7 +170,7 @@ async function evalSingleTurn(
     fixtureId: fixture.id,
     model: MODEL,
     action,
-    reasoning: assistantText,
+    reasoning,
     score,
     durationMs,
   };

@@ -13,15 +13,14 @@ vi.mock("./set-of-mark.js", () => ({
 }));
 vi.mock("./actions.js", () => ({
   executeAction: vi.fn(),
-  parseAction: vi.fn(),
   isActionResult: vi.fn((result: unknown) => typeof result === "object" && result !== null && (result as Record<string, unknown>).kind === "result"),
 }));
 
-import { resolveLabel, detectSignal, executeSubTask } from "./actor.js";
+import { resolveLabel, toolToBrowserAction, executeSubTask } from "./actor.js";
 import { getClient } from "../../ai/client.js";
 import { getInteractiveElements, formatA11yTree } from "./a11y.js";
 import { captureWithLabels } from "./set-of-mark.js";
-import { executeAction, parseAction } from "./actions.js";
+import { executeAction } from "./actions.js";
 import type { A11yElement, SubTask } from "./types.js";
 
 beforeEach(() => {
@@ -121,17 +120,34 @@ describe("resolveLabel", () => {
   });
 });
 
-describe("detectSignal", () => {
-  it("detects [DONE] signal", () => {
-    expect(detectSignal("The task is complete. [DONE] Summary here.")).toBe("done");
+describe("toolToBrowserAction", () => {
+  it("converts browser_click to click action", () => {
+    expect(toolToBrowserAction("browser_click", { label: 3 })).toEqual({ action: "click", label: 3 });
   });
 
-  it("detects [NEED_INPUT] signal", () => {
-    expect(detectSignal("I need credentials. [NEED_INPUT] What is your password?")).toBe("need_input");
+  it("converts browser_type to type action", () => {
+    expect(toolToBrowserAction("browser_type", { text: "hello", press_enter: true })).toEqual({
+      action: "type", text: "hello", press_enter: true,
+    });
   });
 
-  it("returns null for no signal", () => {
-    expect(detectSignal("Let me click the button now.")).toBeNull();
+  it("converts browser_navigate to navigate action", () => {
+    expect(toolToBrowserAction("browser_navigate", { url: "https://example.com" })).toEqual({
+      action: "navigate", url: "https://example.com",
+    });
+  });
+
+  it("converts browser_go_back to go_back action", () => {
+    expect(toolToBrowserAction("browser_go_back", {})).toEqual({ action: "go_back" });
+  });
+
+  it("returns null for signal tools", () => {
+    expect(toolToBrowserAction("task_complete", { summary: "done" })).toBeNull();
+    expect(toolToBrowserAction("need_input", { question: "?" })).toBeNull();
+  });
+
+  it("returns null for unknown tools", () => {
+    expect(toolToBrowserAction("unknown_tool", {})).toBeNull();
   });
 });
 
@@ -157,12 +173,15 @@ describe("executeSubTask", () => {
     vi.mocked(captureWithLabels).mockResolvedValue(Buffer.from("labeled-screenshot"));
   }
 
-  it("returns success when model emits [DONE]", async () => {
+  it("returns success when model emits task_complete", async () => {
     setupMocks();
     const page = mockPage();
 
     const mockCreate = vi.fn().mockResolvedValue({
-      content: [{ type: "text", text: "The button is already submitted. [DONE] Form was already submitted." }],
+      content: [
+        { type: "text", text: "The button is already submitted." },
+        { type: "tool_use", id: "toolu_1", name: "task_complete", input: { summary: "Form was already submitted." } },
+      ],
     });
     vi.mocked(getClient).mockReturnValue({
       messages: { create: mockCreate },
@@ -179,12 +198,15 @@ describe("executeSubTask", () => {
     }
   });
 
-  it("returns needs_input when model emits [NEED_INPUT]", async () => {
+  it("returns needs_input when model emits need_input", async () => {
     setupMocks();
     const page = mockPage();
 
     const mockCreate = vi.fn().mockResolvedValue({
-      content: [{ type: "text", text: "I need login credentials. [NEED_INPUT] What is your username and password?" }],
+      content: [
+        { type: "text", text: "I need login credentials." },
+        { type: "tool_use", id: "toolu_1", name: "need_input", input: { question: "What is your username and password?" } },
+      ],
     });
     vi.mocked(getClient).mockReturnValue({
       messages: { create: mockCreate },
@@ -210,18 +232,23 @@ describe("executeSubTask", () => {
       callCount++;
       if (callCount === 1) {
         return Promise.resolve({
-          content: [{ type: "text", text: "I'll click submit.\n```json\n{\"action\":\"click\",\"label\":1}\n```" }],
+          content: [
+            { type: "text", text: "I'll click submit." },
+            { type: "tool_use", id: "toolu_1", name: "browser_click", input: { label: 1 } },
+          ],
         });
       }
       return Promise.resolve({
-        content: [{ type: "text", text: "[DONE] Form submitted successfully." }],
+        content: [
+          { type: "text", text: "Form submitted." },
+          { type: "tool_use", id: "toolu_2", name: "task_complete", input: { summary: "Form submitted successfully." } },
+        ],
       });
     });
     vi.mocked(getClient).mockReturnValue({
       messages: { create: mockCreate },
     } as never);
 
-    vi.mocked(parseAction).mockReturnValueOnce({ action: "click", label: 1 });
     vi.mocked(executeAction).mockResolvedValueOnce({
       kind: "result",
       screenshot: Buffer.from("result-screenshot"),
@@ -243,13 +270,15 @@ describe("executeSubTask", () => {
     const page = mockPage();
 
     const mockCreate = vi.fn().mockResolvedValue({
-      content: [{ type: "text", text: "```json\n{\"action\":\"click\",\"selector\":\"#missing\"}\n```" }],
+      content: [
+        { type: "text", text: "Clicking the missing element." },
+        { type: "tool_use", id: "toolu_1", name: "browser_click", input: { selector: "#missing" } },
+      ],
     });
     vi.mocked(getClient).mockReturnValue({
       messages: { create: mockCreate },
     } as never);
 
-    vi.mocked(parseAction).mockReturnValue({ action: "click", selector: "#missing" });
     vi.mocked(executeAction).mockResolvedValue({ kind: "error", error: "Element not found" });
 
     const result = await executeSubTask(
@@ -261,6 +290,50 @@ describe("executeSubTask", () => {
     expect(result.status).toBe("escalate");
   });
 
+  it("rejects task_complete on chrome-error page", async () => {
+    setupMocks();
+    const page = mockPage();
+
+    // First call: model claims task_complete on an error page
+    // Second call: model tries again and completes properly
+    let callCount = 0;
+    const mockCreate = vi.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        // page.url() will return chrome-error for first task_complete
+        (page as unknown as { url: ReturnType<typeof vi.fn> }).url.mockReturnValue("chrome-error://chromewebdata/");
+        return Promise.resolve({
+          content: [
+            { type: "text", text: "Task done." },
+            { type: "tool_use", id: "toolu_1", name: "task_complete", input: { summary: "Navigated successfully." } },
+          ],
+        });
+      }
+      // After rejection, page recovers
+      (page as unknown as { url: ReturnType<typeof vi.fn> }).url.mockReturnValue("https://example.com");
+      return Promise.resolve({
+        content: [
+          { type: "text", text: "Recovered." },
+          { type: "tool_use", id: "toolu_2", name: "task_complete", input: { summary: "Actually done now." } },
+        ],
+      });
+    });
+    vi.mocked(getClient).mockReturnValue({
+      messages: { create: mockCreate },
+    } as never);
+
+    const result = await executeSubTask(page, subTask, {
+      url: "https://example.com",
+      title: "Example",
+    });
+
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe("success");
+    if (result.status === "success") {
+      expect(result.summary).toBe("Actually done now.");
+    }
+  });
+
   it("injects retry nudge after 3 consecutive errors", async () => {
     setupMocks();
     const page = mockPage();
@@ -270,18 +343,23 @@ describe("executeSubTask", () => {
       callCount++;
       if (callCount <= 4) {
         return Promise.resolve({
-          content: [{ type: "text", text: "```json\n{\"action\":\"click\",\"selector\":\"#bad\"}\n```" }],
+          content: [
+            { type: "text", text: "Trying again." },
+            { type: "tool_use", id: `toolu_${callCount}`, name: "browser_click", input: { selector: "#bad" } },
+          ],
         });
       }
       return Promise.resolve({
-        content: [{ type: "text", text: "[DONE] Finally got it." }],
+        content: [
+          { type: "text", text: "Done." },
+          { type: "tool_use", id: "toolu_5", name: "task_complete", input: { summary: "Finally got it." } },
+        ],
       });
     });
     vi.mocked(getClient).mockReturnValue({
       messages: { create: mockCreate },
     } as never);
 
-    vi.mocked(parseAction).mockReturnValue({ action: "click", selector: "#bad" });
     vi.mocked(executeAction).mockResolvedValue({
       kind: "result",
       screenshot: Buffer.from("error-screenshot"),
@@ -295,7 +373,37 @@ describe("executeSubTask", () => {
       { url: "https://example.com", title: "Example" },
     );
 
-    // Should escalate at attempt 4 (consecutive errors >= 4 after action result)
+    // Should escalate at consecutive errors >= 4
     expect(result.status).toBe("escalate");
+  });
+
+  it("passes tools and tool_choice to API call", async () => {
+    setupMocks();
+    const page = mockPage();
+
+    const mockCreate = vi.fn().mockResolvedValue({
+      content: [
+        { type: "tool_use", id: "toolu_1", name: "task_complete", input: { summary: "Done" } },
+      ],
+    });
+    vi.mocked(getClient).mockReturnValue({
+      messages: { create: mockCreate },
+    } as never);
+
+    await executeSubTask(page, subTask, {
+      url: "https://example.com",
+      title: "Example",
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: expect.arrayContaining([
+          expect.objectContaining({ name: "browser_click" }),
+          expect.objectContaining({ name: "task_complete" }),
+          expect.objectContaining({ name: "need_input" }),
+        ]),
+        tool_choice: { type: "any" },
+      }),
+    );
   });
 });

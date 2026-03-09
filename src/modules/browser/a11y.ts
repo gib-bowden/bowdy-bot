@@ -65,6 +65,16 @@ async function collectRole(page: Page, role: AriaRole): Promise<A11yElement[]> {
       name = name.slice(0, 77) + "...";
     }
 
+    // Extract href for links so the actor can use navigate as a fallback
+    let href: string | undefined;
+    if (role === "link") {
+      try {
+        href = (await el.getAttribute("href", { timeout: LOCATOR_TIMEOUT_MS })) ?? undefined;
+      } catch {
+        // Fallback: no href
+      }
+    }
+
     const locatorStr = buildLocator(role, name);
 
     results.push({
@@ -73,6 +83,7 @@ async function collectRole(page: Page, role: AriaRole): Promise<A11yElement[]> {
       name,
       locator: locatorStr,
       bounds: { x: box.x, y: box.y, width: box.width, height: box.height },
+      ...(href ? { href } : {}),
     });
   }
 
@@ -123,6 +134,9 @@ export function formatA11yTree(elements: A11yElement[]): string {
       let line = `[${el.label}] ${el.role} "${el.name}"`;
       if (el.bounds) {
         line += ` (${Math.round(el.bounds.x)},${Math.round(el.bounds.y)} ${Math.round(el.bounds.width)}x${Math.round(el.bounds.height)})`;
+      }
+      if (el.href) {
+        line += ` → ${el.href}`;
       }
       return line;
     })

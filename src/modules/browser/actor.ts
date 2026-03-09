@@ -4,40 +4,185 @@ import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
 import { getInteractiveElements, formatA11yTree } from "./a11y.js";
 import { captureWithLabels } from "./set-of-mark.js";
-import { executeAction, parseAction, isActionResult, type BrowserAction, type ActionResult } from "./actions.js";
+import { executeAction, isActionResult, type BrowserAction, type ActionResult } from "./actions.js";
 import type { SubTask, ActorResult, PageMetadata, A11yElement } from "./types.js";
 import { recordSessionTurn } from "./eval/capture.js";
 
-export const ACTOR_MODEL = process.env["ACTOR_MODEL"] || "claude-haiku-4-5-20251001";
+export const ACTOR_MODEL = process.env["ACTOR_MODEL"] || "claude-sonnet-4-6";
 const MAX_SCREENSHOTS_IN_HISTORY = 2;
 
 const RETRY_NUDGE =
-  "You have failed multiple actions in a row. Try a completely different approach: use x/y coordinates instead of selectors, use keyboard navigation (Tab/Enter), or respond with [NEED_INPUT] to ask the user for help.";
+  "You have failed multiple actions in a row. Try a completely different approach: use x/y coordinates instead of selectors, use keyboard navigation (Tab/Enter), or use the need_input tool to ask the user for help.";
+
+export const ACTOR_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "browser_click",
+    description: "Click an element on the page. Prefer clicking by label number [N]. Fall back to CSS selectors or x/y coordinates if needed.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        label: { type: "number", description: "Label number from the accessibility tree" },
+        selector: { type: "string", description: "CSS selector" },
+        x: { type: "number", description: "X coordinate" },
+        y: { type: "number", description: "Y coordinate" },
+      },
+    },
+  },
+  {
+    name: "browser_type",
+    description: "Type text, optionally into a specific element. If no selector is provided, types into the currently focused element.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        text: { type: "string", description: "Text to type" },
+        selector: { type: "string", description: "CSS selector to type into" },
+        press_enter: { type: "boolean", description: "Press Enter after typing" },
+      },
+      required: ["text"],
+    },
+  },
+  {
+    name: "browser_fill",
+    description: "Fill a form field with text (clears existing content first).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        selector: { type: "string", description: "CSS selector of the input" },
+        text: { type: "string", description: "Text to fill" },
+      },
+      required: ["selector", "text"],
+    },
+  },
+  {
+    name: "browser_hover",
+    description: "Hover over an element. Prefer hovering by label number [N].",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        label: { type: "number", description: "Label number from the accessibility tree" },
+        selector: { type: "string", description: "CSS selector" },
+        x: { type: "number", description: "X coordinate" },
+        y: { type: "number", description: "Y coordinate" },
+      },
+    },
+  },
+  {
+    name: "browser_select",
+    description: "Select an option from a dropdown/select element.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        selector: { type: "string", description: "CSS selector of the select element" },
+        value: { type: "string", description: "Option value or label text to select" },
+      },
+      required: ["selector", "value"],
+    },
+  },
+  {
+    name: "browser_scroll",
+    description: "Scroll the page up or down.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        direction: { type: "string", enum: ["up", "down"], description: "Scroll direction" },
+        amount: { type: "number", description: "Pixels to scroll (default 500)" },
+      },
+      required: ["direction"],
+    },
+  },
+  {
+    name: "browser_press_key",
+    description: "Press a keyboard key (e.g. Enter, Escape, Tab, ArrowDown).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        key: { type: "string", description: "Key to press" },
+      },
+      required: ["key"],
+    },
+  },
+  {
+    name: "browser_wait",
+    description: "Wait for a specified number of seconds.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        seconds: { type: "number", description: "Seconds to wait (default 2)" },
+      },
+    },
+  },
+  {
+    name: "browser_go_back",
+    description: "Navigate back to the previous page.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
+    name: "browser_navigate",
+    description: "Navigate to a URL. ONLY use URLs that appear verbatim in the accessibility tree or page content. NEVER guess, modify, or construct URLs.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        url: { type: "string", description: "URL to navigate to (must be from the page)" },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "task_complete",
+    description: "Signal that the sub-task is complete. Before calling this, verify the current page URL and screenshot match the expected outcome. Do NOT call this if the page shows an error.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        summary: { type: "string", description: "Summary of what was accomplished" },
+      },
+      required: ["summary"],
+    },
+  },
+  {
+    name: "need_input",
+    description: "Signal that user input is needed (credentials, CAPTCHA, ambiguous choice, etc.).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        question: { type: "string", description: "Question to ask the user" },
+      },
+      required: ["question"],
+    },
+  },
+];
 
 export const ACTOR_SYSTEM_PROMPT = `You execute browser automation sub-tasks. You see a labeled screenshot and an accessibility tree listing interactive elements.
 
-Available actions (respond with a JSON code block):
-\`\`\`
-{ "action": "click", "label": 3 }
-{ "action": "click", "selector": "css selector" }
-{ "action": "click", "x": 100, "y": 200 }
-{ "action": "type", "selector": "css selector", "text": "...", "press_enter": true }
-{ "action": "type", "text": "..." }
-{ "action": "fill", "selector": "css selector", "text": "..." }
-{ "action": "hover", "label": 5 }
-{ "action": "hover", "selector": "css selector" }
-{ "action": "select", "selector": "css selector", "label": "Option text" }
-{ "action": "scroll", "direction": "down", "amount": 500 }
-{ "action": "press_key", "key": "Escape" }
-{ "action": "wait", "seconds": 2 }
-{ "action": "go_back" }
-{ "action": "navigate", "url": "https://..." }
-\`\`\`
+Rules:
+- Prefer clicking by label number [N]. Fall back to CSS selectors or x/y coordinates if needed.
+- ONLY use browser_navigate with URLs that appear verbatim in the accessibility tree or page content. NEVER guess, modify, or construct URLs.
+- Before calling task_complete, verify the current page URL and screenshot match the expected outcome. If the URL is "chrome-error://" or blank, the task is NOT complete — try a different approach instead.
+- Provide brief reasoning in your text response before each tool call.`;
 
-Prefer clicking by label number [N] from the accessibility tree. Fall back to CSS selectors or x/y coordinates if needed.
-Respond with brief reasoning then exactly ONE action JSON block.
-If you need user input (credentials, CAPTCHA, etc.), respond with [NEED_INPUT] followed by your question.
-If the sub-task is already complete based on what you see, respond with [DONE] followed by a summary.`;
+const TOOL_TO_ACTION: Record<string, string> = {
+  browser_click: "click",
+  browser_type: "type",
+  browser_fill: "fill",
+  browser_hover: "hover",
+  browser_select: "select",
+  browser_scroll: "scroll",
+  browser_press_key: "press_key",
+  browser_wait: "wait",
+  browser_go_back: "go_back",
+  browser_navigate: "navigate",
+};
+
+/** Convert a tool_use block into a BrowserAction for resolveLabel + executeAction. */
+export function toolToBrowserAction(name: string, input: Record<string, unknown>): BrowserAction | null {
+  const action = TOOL_TO_ACTION[name];
+  if (!action) {
+    return null;
+  }
+  return { action, ...input } as BrowserAction;
+}
 
 export function resolveLabel(
   action: BrowserAction,
@@ -83,6 +228,8 @@ function trimScreenshotHistory(messages: Anthropic.MessageParam[]): void {
 
     for (let j = msg.content.length - 1; j >= 0; j--) {
       const block = msg.content[j]!;
+
+      // Top-level image blocks
       if (block.type === "image") {
         screenshotCount++;
         if (screenshotCount > MAX_SCREENSHOTS_IN_HISTORY) {
@@ -90,6 +237,23 @@ function trimScreenshotHistory(messages: Anthropic.MessageParam[]): void {
             type: "text",
             text: "[previous screenshot — see latest]",
           };
+        }
+      }
+
+      // Images inside tool_result content blocks
+      if (block.type === "tool_result" && Array.isArray(block.content)) {
+        const content = block.content as (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[];
+        for (let k = content.length - 1; k >= 0; k--) {
+          const inner = content[k]!;
+          if (inner.type === "image") {
+            screenshotCount++;
+            if (screenshotCount > MAX_SCREENSHOTS_IN_HISTORY) {
+              content[k] = {
+                type: "text",
+                text: "[previous screenshot — see latest]",
+              };
+            }
+          }
         }
       }
     }
@@ -103,25 +267,17 @@ async function getPageMetadata(page: Page): Promise<PageMetadata> {
   };
 }
 
-export function detectSignal(text: string): "done" | "need_input" | null {
-  if (text.includes("[DONE]")) {
-    return "done";
-  }
-  if (text.includes("[NEED_INPUT]")) {
-    return "need_input";
-  }
-  return null;
-}
-
 export async function executeSubTask(
   page: Page,
   subTask: SubTask,
   initialMetadata: PageMetadata,
 ): Promise<ActorResult> {
   const client = getClient();
-  const maxAttempts = subTask.maxAttempts || 5;
+  const maxAttempts = subTask.maxAttempts || 8;
   const messages: Anthropic.MessageParam[] = [];
   let consecutiveErrors = 0;
+  let actionsAttempted = 0;
+  const failedDomains = new Set<string>();
 
   // Build initial user message with screenshot + a11y tree
   let elements: A11yElement[];
@@ -163,9 +319,9 @@ export async function executeSubTask(
 
   let currentElements = elements;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  while (actionsAttempted < maxAttempts) {
     logger.info(
-      { attempt, subTaskId: subTask.id, instruction: subTask.instruction },
+      { actionsAttempted, subTaskId: subTask.id, instruction: subTask.instruction },
       "Actor iteration",
     );
 
@@ -176,32 +332,65 @@ export async function executeSubTask(
       max_tokens: 1024,
       system: ACTOR_SYSTEM_PROMPT,
       messages,
+      tools: ACTOR_TOOLS,
+      tool_choice: { type: "any" },
     });
 
-    const assistantText = response.content
+    // Extract reasoning text for logging
+    const reasoning = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
       .map((b) => b.text)
       .join("\n");
 
-    logger.info(
-      { attempt, reasoning: assistantText.slice(0, 500) },
-      "Actor response",
+    if (reasoning) {
+      logger.info({ actionsAttempted, reasoning: reasoning.slice(0, 500) }, "Actor reasoning");
+    }
+
+    // Find tool_use block
+    const toolUseBlock = response.content.find(
+      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
     );
 
-    messages.push({ role: "assistant", content: assistantText });
+    if (!toolUseBlock) {
+      // Should not happen with tool_choice: "any", but handle gracefully
+      logger.warn({ actionsAttempted }, "Actor returned no tool_use block");
+      break;
+    }
 
-    // Check for signals
-    const signal = detectSignal(assistantText);
+    // Push the full assistant message (includes tool_use block for conversation threading)
+    messages.push({ role: "assistant", content: response.content });
 
-    if (signal === "done") {
-      const summary =
-        assistantText.split("[DONE]").pop()?.trim() || "Sub-task completed";
+    const toolName = toolUseBlock.name;
+    const toolInput = toolUseBlock.input as Record<string, unknown>;
+
+    // --- Handle signal tools ---
+
+    if (toolName === "task_complete") {
+      const summary = String(toolInput["summary"] || "Sub-task completed");
       const metadata = await getPageMetadata(page);
       const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
+
+      // Reject task_complete if the page is in an error state
+      const isErrorPage = metadata.url.startsWith("chrome-error://") || metadata.url === "about:blank";
+      if (isErrorPage) {
+        logger.warn({ actionsAttempted, url: metadata.url }, "Actor claimed task_complete but page is in error state");
+        messages.push({
+          role: "user",
+          content: [{
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            is_error: true,
+            content: [{ type: "text", text: `The current page is ${metadata.url} — this is a browser error page, not a successful outcome. The task is NOT complete. Try a different approach.` }],
+          }],
+        });
+        actionsAttempted++;
+        continue;
+      }
+
       recordSessionTurn({
-        iteration: attempt,
+        iteration: actionsAttempted,
         timestamp: new Date().toISOString(),
-        assistant_text: assistantText,
+        assistant_text: reasoning,
         parsed_action: null,
         action_outcome: "signal_done",
         screenshot_file: null,
@@ -215,14 +404,12 @@ export async function executeSubTask(
       return { status: "success", summary, screenshot, metadata };
     }
 
-    if (signal === "need_input") {
-      const question =
-        assistantText.split("[NEED_INPUT]").pop()?.trim() ||
-        "I need more information";
+    if (toolName === "need_input") {
+      const question = String(toolInput["question"] || "I need more information");
       recordSessionTurn({
-        iteration: attempt,
+        iteration: actionsAttempted,
         timestamp: new Date().toISOString(),
-        assistant_text: assistantText,
+        assistant_text: reasoning,
         parsed_action: null,
         action_outcome: "signal_need_input",
         screenshot_file: null,
@@ -238,43 +425,21 @@ export async function executeSubTask(
       };
     }
 
-    // Parse action
-    const action = parseAction(assistantText);
+    // --- Handle browser action tools ---
+
+    const action = toolToBrowserAction(toolName, toolInput);
     if (!action) {
-      consecutiveErrors++;
-      logger.warn({ attempt }, "Actor returned unparseable action");
-      recordSessionTurn({
-        iteration: attempt,
-        timestamp: new Date().toISOString(),
-        assistant_text: assistantText,
-        parsed_action: null,
-        action_outcome: "parse_failure",
-        screenshot_file: null,
-        consecutive_errors: consecutiveErrors,
-        retry_nudge_injected: false,
-        layer: "actor",
-        subtask_id: subTask.id,
-      });
+      logger.warn({ toolName }, "Actor used unknown tool");
       messages.push({
         role: "user",
-        content: [
-          {
-            type: "text",
-            text: "I couldn't parse an action from your response. Please respond with a valid JSON action block.",
-          },
-        ],
+        content: [{
+          type: "tool_result",
+          tool_use_id: toolUseBlock.id,
+          is_error: true,
+          content: [{ type: "text", text: `Unknown tool: ${toolName}` }],
+        }],
       });
-
-      if (consecutiveErrors >= 4) {
-        const metadata = await getPageMetadata(page);
-        const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
-        return {
-          status: "escalate",
-          reason: `Failed to parse action after ${consecutiveErrors} consecutive errors`,
-          screenshot,
-          metadata,
-        };
-      }
+      actionsAttempted++;
       continue;
     }
 
@@ -282,11 +447,11 @@ export async function executeSubTask(
     const resolved = resolveLabel(action, currentElements);
     if ("error" in resolved) {
       consecutiveErrors++;
-      logger.warn({ attempt, error: resolved.error }, "Label resolution failed");
+      logger.warn({ actionsAttempted, error: resolved.error }, "Label resolution failed");
       recordSessionTurn({
-        iteration: attempt,
+        iteration: actionsAttempted,
         timestamp: new Date().toISOString(),
-        assistant_text: assistantText,
+        assistant_text: reasoning,
         parsed_action: action,
         action_outcome: "error_no_screenshot",
         action_error: resolved.error,
@@ -296,9 +461,20 @@ export async function executeSubTask(
         layer: "actor",
         subtask_id: subTask.id,
       });
+
+      let errorText = `Action failed: ${resolved.error}. Try a different approach.`;
+      if (consecutiveErrors >= 3) {
+        errorText += `\n\n${RETRY_NUDGE}`;
+      }
+
       messages.push({
         role: "user",
-        content: [{ type: "text", text: `Action failed: ${resolved.error}. Try a different approach.` }],
+        content: [{
+          type: "tool_result",
+          tool_use_id: toolUseBlock.id,
+          is_error: true,
+          content: [{ type: "text", text: errorText }],
+        }],
       });
 
       if (consecutiveErrors >= 4) {
@@ -311,23 +487,36 @@ export async function executeSubTask(
           metadata,
         };
       }
+      actionsAttempted++;
       continue;
     }
 
     // Execute action
-    logger.info({ attempt, action: resolved }, "Actor executing action");
+    actionsAttempted++;
+    logger.info({ actionsAttempted, action: resolved }, "Actor executing action");
     const result = await executeAction(page, resolved);
 
     if (!isActionResult(result)) {
       consecutiveErrors++;
+
+      // Track failed domains for navigate actions
+      if (resolved.action === "navigate" && resolved.url) {
+        try {
+          const domain = new URL(resolved.url).hostname;
+          failedDomains.add(domain);
+        } catch {
+          // Invalid URL, ignore
+        }
+      }
+
       logger.warn(
-        { attempt, error: result.error, consecutiveErrors },
+        { actionsAttempted, error: result.error, consecutiveErrors },
         "Actor action failed (no screenshot)",
       );
       recordSessionTurn({
-        iteration: attempt,
+        iteration: actionsAttempted,
         timestamp: new Date().toISOString(),
-        assistant_text: assistantText,
+        assistant_text: reasoning,
         parsed_action: resolved,
         action_outcome: "error_no_screenshot",
         action_error: result.error,
@@ -339,6 +528,12 @@ export async function executeSubTask(
       });
 
       let errorText = `Action failed: ${result.error}`;
+      if (resolved.action === "navigate") {
+        errorText += `\nThis site is blocking our browser. Do NOT retry this domain. Try a completely different site or approach.`;
+      }
+      if (failedDomains.size > 0) {
+        errorText += `\nBlocked domains (do not retry): ${[...failedDomains].join(", ")}`;
+      }
       if (consecutiveErrors >= 3) {
         errorText += `\n\n${RETRY_NUDGE}`;
       }
@@ -348,7 +543,7 @@ export async function executeSubTask(
         const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
         return {
           status: "escalate",
-          reason: `Action failed: ${result.error}`,
+          reason: `Action failed: ${result.error}${failedDomains.size > 0 ? ` (blocked domains: ${[...failedDomains].join(", ")})` : ""}`,
           screenshot,
           metadata,
         };
@@ -356,7 +551,12 @@ export async function executeSubTask(
 
       messages.push({
         role: "user",
-        content: [{ type: "text", text: errorText }],
+        content: [{
+          type: "tool_result",
+          tool_use_id: toolUseBlock.id,
+          is_error: true,
+          content: [{ type: "text", text: errorText }],
+        }],
       });
       continue;
     }
@@ -365,7 +565,7 @@ export async function executeSubTask(
     if (result.error) {
       consecutiveErrors++;
       logger.warn(
-        { attempt, error: result.error, consecutiveErrors },
+        { actionsAttempted, error: result.error, consecutiveErrors },
         "Actor action failed (with screenshot)",
       );
     } else {
@@ -373,9 +573,9 @@ export async function executeSubTask(
     }
 
     recordSessionTurn({
-      iteration: attempt,
+      iteration: actionsAttempted,
       timestamp: new Date().toISOString(),
-      assistant_text: assistantText,
+      assistant_text: reasoning,
       parsed_action: resolved,
       action_outcome: result.error ? "error_with_screenshot" : "success",
       action_error: result.error,
@@ -410,13 +610,20 @@ export async function executeSubTask(
     const newA11yTree = formatA11yTree(currentElements);
     const metadata = await getPageMetadata(page);
 
-    const userContent: Anthropic.ContentBlockParam[] = [];
+    const toolResultContent: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = [];
 
     if (result.error) {
-      userContent.push({ type: "text", text: `Action error: ${result.error}` });
+      toolResultContent.push({ type: "text", text: `Action error: ${result.error}` });
     }
 
-    userContent.push(
+    if (result.unchanged) {
+      toolResultContent.push({
+        type: "text",
+        text: "The page didn't change after your click. If the link opens a new tab, try using browser_navigate with the link's href from the accessibility tree instead.",
+      });
+    }
+
+    toolResultContent.push(
       {
         type: "image",
         source: {
@@ -432,10 +639,17 @@ export async function executeSubTask(
     );
 
     if (consecutiveErrors >= 3) {
-      userContent.push({ type: "text", text: RETRY_NUDGE });
+      toolResultContent.push({ type: "text", text: RETRY_NUDGE });
     }
 
-    messages.push({ role: "user", content: userContent });
+    messages.push({
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: toolUseBlock.id,
+        content: toolResultContent,
+      }],
+    });
   }
 
   // Exhausted max attempts
@@ -443,7 +657,7 @@ export async function executeSubTask(
   const screenshot = await page.screenshot({ type: "jpeg", quality: 75 });
   return {
     status: "escalate",
-    reason: `Exhausted ${maxAttempts} attempts for sub-task: ${subTask.instruction}`,
+    reason: `Exhausted ${actionsAttempted} actions for sub-task: ${subTask.instruction}`,
     screenshot,
     metadata,
   };
