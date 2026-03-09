@@ -1,4 +1,4 @@
-import type { Page, Locator } from "playwright";
+import type { Page, Locator } from "playwright-core";
 import type { A11yElement } from "./types.js";
 
 type AriaRole = Parameters<Page["getByRole"]>[0];

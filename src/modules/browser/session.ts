@@ -1,4 +1,5 @@
-import { chromium, type Browser, type Page } from "playwright";
+import { Camoufox } from "camoufox-js";
+import type { Browser, Page } from "playwright-core";
 import { logger } from "../../logger.js";
 
 let browser: Browser | null = null;
@@ -20,12 +21,16 @@ function resetInactivityTimer(): void {
 
 export async function getPage(): Promise<Page> {
   if (!browser || !browser.isConnected()) {
-    logger.info("Launching Chromium");
-    browser = await chromium.launch({ headless: true });
+    const headless = process.platform === "linux" ? "virtual" as const : false;
+    logger.info({ headless }, "Launching Camoufox");
+    browser = await Camoufox({
+      headless,
+      window: [VIEWPORT.width, VIEWPORT.height],
+    });
   }
 
   if (!page || page.isClosed()) {
-    const context = await browser.newContext({ viewport: VIEWPORT });
+    const context = await browser!.newContext({ viewport: VIEWPORT });
     page = await context.newPage();
   }
 

@@ -8,7 +8,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsup src/index.ts --format esm --dts --external playwright",
+    "build": "tsup src/index.ts --format esm --dts --external camoufox-js --external playwright-core",
     "start": "node dist/index.js",
     "test": "vitest run",
     "eval": "vitest run --config vitest.eval.config.ts",
@@ -26,7 +26,7 @@
     "grammy": "^1.31.0",
     "node-schedule": "^2.1.1",
     "pino": "^9.6.0",
-    "playwright": "^1.58.2",
+    "camoufox-js": "^0.9.1",
     "twilio": "^5.12.2",
     "ulid": "^2.3.0"
   },

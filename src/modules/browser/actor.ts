@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Page } from "playwright";
+import type { Page } from "playwright-core";
 import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
 import { getInteractiveElements, formatA11yTree } from "./a11y.js";

@@ -1,4 +1,4 @@
-import type { Page, Frame } from "playwright";
+import type { Page, Frame } from "playwright-core";
 import { logger } from "../../logger.js";
 
 export type BrowserAction =

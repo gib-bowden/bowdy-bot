@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Page } from "playwright";
+import type { Page } from "playwright-core";
 import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
 import { executeSubTask } from "./actor.js";
@@ -78,7 +78,17 @@ function buildRouterSystemPrompt(
   progressLog: ProgressEntry[],
   blockedDomains: Set<string>,
 ): string {
+  const today = new Date();
+  const dateStr = today.toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
   let prompt = `You are a browser automation planner. You can see the page via screenshots.
+
+Today is ${dateStr}.
 
 Your goal: ${goal}
 
@@ -90,7 +100,8 @@ Use your tools to accomplish the goal:
 Guidelines:
 - Use the search engine on the current page to discover URLs before navigating. Only navigate directly to URLs you found in search results or on the current page.
 - Write action-oriented sub-task instructions — tell the Actor to DO things (click, fill, submit), not to scout and report back. The Actor should take actions toward the goal, not describe what it sees.
-- When a sub-task is escalated or failed, adapt your strategy for the next attempt. Do NOT retry the same approach.`;
+- When a sub-task is escalated or failed, adapt your strategy for the next attempt. Do NOT retry the same approach.
+- Always resolve relative dates (e.g. "this Friday", "tomorrow") to concrete dates in sub-task instructions so the Actor knows exactly what to select.`;
 
   if (blockedDomains.size > 0) {
     prompt += `\n\nBLOCKED DOMAINS (unreachable, do not use): ${[...blockedDomains].join(", ")}`;
