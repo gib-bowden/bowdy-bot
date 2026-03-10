@@ -68,15 +68,63 @@ export interface ActionError {
   error: string;
 }
 
-const SETTLE_DELAY_MS = 1000;
-
 export async function takeScreenshot(page: Page): Promise<Buffer> {
-  return await page.screenshot({ type: "jpeg", quality: 50 });
+  return await page.screenshot({ type: "jpeg", quality: 70 });
 }
 
 async function settle(page: Page): Promise<void> {
-  await page.waitForLoadState("load").catch(() => {});
-  await new Promise((resolve) => setTimeout(resolve, SETTLE_DELAY_MS));
+  // Phase 1: Wait for network idle (3s timeout for long-polling/websocket pages)
+  await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
+
+  // Phase 2: Wait for DOM stability — resolve after 500ms of no mutations, hard cap 2s
+  await page.evaluate(() => {
+    return new Promise<void>((resolve) => {
+      if (!document.body) {
+        resolve();
+        return;
+      }
+
+      let settled = false;
+      let quietTimer: ReturnType<typeof setTimeout> | null = null;
+      let hardCapTimer: ReturnType<typeof setTimeout> | null = null;
+      const QUIET_MS = 500;
+      const HARD_CAP_MS = 2000;
+
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        observer.disconnect();
+        if (quietTimer) {
+          clearTimeout(quietTimer);
+        }
+        if (hardCapTimer) {
+          clearTimeout(hardCapTimer);
+        }
+        resolve();
+      };
+
+      const observer = new MutationObserver(() => {
+        if (quietTimer) {
+          clearTimeout(quietTimer);
+        }
+        quietTimer = setTimeout(finish, QUIET_MS);
+      });
+
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+      });
+
+      // Start the quiet timer immediately (resolves if no mutations at all)
+      quietTimer = setTimeout(finish, QUIET_MS);
+
+      // Hard cap for continuously-animated pages
+      hardCapTimer = setTimeout(finish, HARD_CAP_MS);
+    });
+  }).catch(() => {});
 }
 
 const FRAME_TIMEOUT_MS = 2000;

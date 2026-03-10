@@ -7,7 +7,7 @@ let page: Page | null = null;
 let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
 
 const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-const VIEWPORT = { width: 1280, height: 720 };
+const VIEWPORT = { width: 1280, height: 800 };
 
 function resetInactivityTimer(): void {
   if (inactivityTimer) {
