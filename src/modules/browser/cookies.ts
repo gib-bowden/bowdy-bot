@@ -89,11 +89,16 @@ export async function loadCookies(context: BrowserContext): Promise<void> {
 }
 
 export async function clearCookies(domain?: string): Promise<void> {
-  const db = getDb();
-  if (domain) {
-    db.delete(schema.browserCookies).where(eq(schema.browserCookies.domain, domain)).run();
-  } else {
-    db.delete(schema.browserCookies).run();
+  try {
+    const db = getDb();
+    if (domain) {
+      db.delete(schema.browserCookies).where(eq(schema.browserCookies.domain, domain)).run();
+    } else {
+      db.delete(schema.browserCookies).run();
+    }
+    logger.info({ domain: domain ?? "all" }, "Cleared browser cookies");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn({ err: message }, "Failed to clear cookies");
   }
-  logger.info({ domain: domain ?? "all" }, "Cleared browser cookies");
 }

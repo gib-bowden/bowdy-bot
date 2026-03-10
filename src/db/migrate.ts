@@ -120,6 +120,31 @@ export function ensureSchema(): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS browser_session_metrics (
+      id TEXT PRIMARY KEY,
+      goal TEXT NOT NULL,
+      start_url TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      total_actions INTEGER NOT NULL DEFAULT 0,
+      successful_actions INTEGER NOT NULL DEFAULT 0,
+      failed_actions INTEGER NOT NULL DEFAULT 0,
+      total_duration_ms INTEGER,
+      router_iterations INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS browser_action_metrics (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES browser_session_metrics(id),
+      action TEXT NOT NULL,
+      success INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      duration_ms INTEGER NOT NULL,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      url TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS email_rules (
       id TEXT PRIMARY KEY,
       account_email TEXT,

@@ -40,6 +40,9 @@ function clearSessionTimeout(): void {
 }
 
 function resetSession(): void {
+  if (metricsSessionId) {
+    endMetricsSession("timeout");
+  }
   busy = false;
   routerGoal = "";
   routerProgressLog = [];

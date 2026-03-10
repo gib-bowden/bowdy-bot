@@ -534,6 +534,7 @@ export async function executeSubTask(
       system: ACTOR_SYSTEM_PROMPT,
       messages,
       tools: ACTOR_TOOLS,
+      // "auto" (not "any") — allows text-only reasoning; textOnlyResponses counter handles stalls
       tool_choice: { type: "auto" },
     });
 
@@ -725,7 +726,9 @@ export async function executeSubTask(
 
         actionsAttempted++;
         const result = await fillForm(page, fields);
-        consecutiveErrors = 0;
+        if (result.filled.length > 0) {
+          consecutiveErrors = 0;
+        }
 
         let summary = "";
         if (result.filled.length > 0) {
