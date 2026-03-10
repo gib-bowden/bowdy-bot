@@ -1,5 +1,7 @@
 import type { Page, Frame } from "playwright-core";
 import { logger } from "../../logger.js";
+import { recordActionMetric } from "./metrics.js";
+import { getPageManager } from "./session.js";
 
 export type BrowserAction =
   | { action: "click"; selector?: string; x?: number; y?: number; label?: number }
@@ -61,6 +63,7 @@ export interface ActionResult {
   error?: string;
   unchanged?: boolean;
   popupFailedUrl?: string;
+  popupOpened?: boolean;
 }
 
 export interface ActionError {
@@ -68,15 +71,63 @@ export interface ActionError {
   error: string;
 }
 
-const SETTLE_DELAY_MS = 1000;
-
 export async function takeScreenshot(page: Page): Promise<Buffer> {
-  return await page.screenshot({ type: "jpeg", quality: 50 });
+  return await page.screenshot({ type: "jpeg", quality: 70 });
 }
 
 async function settle(page: Page): Promise<void> {
-  await page.waitForLoadState("load").catch(() => {});
-  await new Promise((resolve) => setTimeout(resolve, SETTLE_DELAY_MS));
+  // Phase 1: Wait for network idle (3s timeout for long-polling/websocket pages)
+  await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
+
+  // Phase 2: Wait for DOM stability — resolve after 500ms of no mutations, hard cap 2s
+  await page.evaluate(() => {
+    return new Promise<void>((resolve) => {
+      if (!document.body) {
+        resolve();
+        return;
+      }
+
+      let settled = false;
+      let quietTimer: ReturnType<typeof setTimeout> | null = null;
+      let hardCapTimer: ReturnType<typeof setTimeout> | null = null;
+      const QUIET_MS = 500;
+      const HARD_CAP_MS = 2000;
+
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        observer.disconnect();
+        if (quietTimer) {
+          clearTimeout(quietTimer);
+        }
+        if (hardCapTimer) {
+          clearTimeout(hardCapTimer);
+        }
+        resolve();
+      };
+
+      const observer = new MutationObserver(() => {
+        if (quietTimer) {
+          clearTimeout(quietTimer);
+        }
+        quietTimer = setTimeout(finish, QUIET_MS);
+      });
+
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+      });
+
+      // Start the quiet timer immediately (resolves if no mutations at all)
+      quietTimer = setTimeout(finish, QUIET_MS);
+
+      // Hard cap for continuously-animated pages
+      hardCapTimer = setTimeout(finish, HARD_CAP_MS);
+    });
+  }).catch(() => {});
 }
 
 const FRAME_TIMEOUT_MS = 2000;
@@ -85,10 +136,40 @@ async function tryInFrames<T>(page: Page, fn: (frame: Frame) => Promise<T>): Pro
   try {
     return await fn(page.mainFrame());
   } catch {
-    for (const frame of page.frames()) {
-      if (frame === page.mainFrame()) {
-        continue;
-      }
+    const childFrames = page.frames().filter((f) => f !== page.mainFrame());
+
+    // Only sort by visibility when there are multiple child frames
+    if (childFrames.length > 1) {
+      const frameMeta = await Promise.all(
+        childFrames.map(async (frame) => {
+          let area = 0;
+          let visible = false;
+          try {
+            const el = await frame.frameElement();
+            const box = await el.boundingBox();
+            if (box) {
+              area = box.width * box.height;
+              visible = box.width > 0 && box.height > 0;
+            }
+          } catch {
+            // Can't determine visibility, treat as non-visible
+          }
+          return { frame, area, visible };
+        }),
+      );
+
+      frameMeta.sort((a, b) => {
+        if (a.visible !== b.visible) {
+          return a.visible ? -1 : 1;
+        }
+        return b.area - a.area;
+      });
+
+      childFrames.length = 0;
+      childFrames.push(...frameMeta.map((m) => m.frame));
+    }
+
+    for (const frame of childFrames) {
       try {
         return await fn(frame);
       } catch {
@@ -144,21 +225,38 @@ export async function executeAction(
 
         page.context().off("page", popupHandler);
 
-        // If the click opened a new tab, switch to it.
-        // TODO: This works for navigational new tabs (target="_blank") but will break
-        // OAuth/payment popups (Stripe, Google sign-in) that rely on the popup's
-        // opener reference. Handle those cases once navigation-based evals are solid.
+        // If the click opened a new tab, use PageManager for multi-tab support
         if (popupPage) {
           const openedPage = popupPage as Page;
           await openedPage.waitForLoadState("load", { timeout: 10000 }).catch(() => {});
           const newUrl = openedPage.url();
-          await openedPage.close().catch(() => {});
+
+          const pm = getPageManager();
           if (newUrl && newUrl !== "about:blank") {
-            await page.goto(newUrl, { waitUntil: "load", timeout: 15000 })
-              .catch((err) => {
-                logger.warn({ err, newUrl }, "Failed to navigate to popup URL");
-                popupFailedUrl = newUrl;
-              });
+            if (!pm.hasPopup()) {
+              // First popup — keep it open for OAuth/payment flows
+              pm.openPopup(openedPage);
+              await settle(openedPage);
+              const screenshot = await takeScreenshot(openedPage);
+              const afterUrl = openedPage.url();
+              const afterTitle = await openedPage.title();
+              return {
+                kind: "result",
+                screenshot,
+                metadata: { url: afterUrl, title: afterTitle },
+                popupOpened: true,
+              };
+            } else {
+              // Second popup — fall back to close-and-navigate behavior
+              await openedPage.close().catch(() => {});
+              await page.goto(newUrl, { waitUntil: "load", timeout: 15000 })
+                .catch((err) => {
+                  logger.warn({ err, newUrl }, "Failed to navigate to popup URL");
+                  popupFailedUrl = newUrl;
+                });
+            }
+          } else {
+            await openedPage.close().catch(() => {});
           }
         }
 
@@ -294,6 +392,56 @@ export async function executeAction(
       return { kind: "error", error: message };
     }
   }
+}
+
+// --- Transient error retry ---
+
+const TRANSIENT_PATTERNS = [
+  /timeout/i, /net::ERR_CONNECTION_RESET/i, /net::ERR_CONNECTION_TIMED_OUT/i,
+  /execution context was destroyed/i, /frame was detached/i,
+  /Target closed/i, /is not stable/i, /intercepted by another element/i,
+];
+
+export function isTransientError(error: string): boolean {
+  return TRANSIENT_PATTERNS.some((p) => p.test(error));
+}
+
+export async function executeActionWithRetry(
+  page: Page,
+  action: BrowserAction,
+  maxRetries = 2,
+): Promise<ActionResult | ActionError> {
+  const startTime = performance.now();
+  let retries = 0;
+  let lastResult = await executeAction(page, action);
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const errorMsg = lastResult.error;
+
+    if (!errorMsg || !isTransientError(errorMsg)) {
+      break;
+    }
+
+    retries++;
+    const delay = 200 * Math.pow(2, attempt);
+    logger.warn({ action: action.action, attempt: attempt + 1, delay }, "Retrying transient error");
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    lastResult = await executeAction(page, action);
+  }
+
+  const durationMs = Math.round(performance.now() - startTime);
+  const success = isActionResult(lastResult) && !lastResult.error;
+  const url = "url" in action ? (action as { url: string }).url : page.url();
+  recordActionMetric({
+    action: action.action,
+    success,
+    durationMs,
+    error: lastResult.error,
+    retries,
+    url,
+  });
+
+  return lastResult;
 }
 
 export function isActionResult(result: ActionResult | ActionError): result is ActionResult {
