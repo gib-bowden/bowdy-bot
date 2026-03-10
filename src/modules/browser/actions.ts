@@ -133,10 +133,40 @@ async function tryInFrames<T>(page: Page, fn: (frame: Frame) => Promise<T>): Pro
   try {
     return await fn(page.mainFrame());
   } catch {
-    for (const frame of page.frames()) {
-      if (frame === page.mainFrame()) {
-        continue;
-      }
+    const childFrames = page.frames().filter((f) => f !== page.mainFrame());
+
+    // Only sort by visibility when there are multiple child frames
+    if (childFrames.length > 1) {
+      const frameMeta = await Promise.all(
+        childFrames.map(async (frame) => {
+          let area = 0;
+          let visible = false;
+          try {
+            const el = await frame.frameElement();
+            const box = await el.boundingBox();
+            if (box) {
+              area = box.width * box.height;
+              visible = box.width > 0 && box.height > 0;
+            }
+          } catch {
+            // Can't determine visibility, treat as non-visible
+          }
+          return { frame, area, visible };
+        }),
+      );
+
+      frameMeta.sort((a, b) => {
+        if (a.visible !== b.visible) {
+          return a.visible ? -1 : 1;
+        }
+        return b.area - a.area;
+      });
+
+      childFrames.length = 0;
+      childFrames.push(...frameMeta.map((m) => m.frame));
+    }
+
+    for (const frame of childFrames) {
       try {
         return await fn(frame);
       } catch {
@@ -342,6 +372,41 @@ export async function executeAction(
       return { kind: "error", error: message };
     }
   }
+}
+
+// --- Transient error retry ---
+
+const TRANSIENT_PATTERNS = [
+  /timeout/i, /net::ERR_CONNECTION_RESET/i, /net::ERR_CONNECTION_TIMED_OUT/i,
+  /execution context was destroyed/i, /frame was detached/i,
+  /Target closed/i, /is not stable/i, /intercepted by another element/i,
+];
+
+export function isTransientError(error: string): boolean {
+  return TRANSIENT_PATTERNS.some((p) => p.test(error));
+}
+
+export async function executeActionWithRetry(
+  page: Page,
+  action: BrowserAction,
+  maxRetries = 2,
+): Promise<ActionResult | ActionError> {
+  let lastResult = await executeAction(page, action);
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const errorMsg = lastResult.error;
+
+    if (!errorMsg || !isTransientError(errorMsg)) {
+      return lastResult;
+    }
+
+    const delay = 200 * Math.pow(2, attempt);
+    logger.warn({ action: action.action, attempt: attempt + 1, delay }, "Retrying transient error");
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    lastResult = await executeAction(page, action);
+  }
+
+  return lastResult;
 }
 
 export function isActionResult(result: ActionResult | ActionError): result is ActionResult {

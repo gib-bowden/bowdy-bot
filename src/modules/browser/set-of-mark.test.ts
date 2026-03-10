@@ -15,7 +15,7 @@ function createMockPage() {
 }
 
 describe("captureWithLabels", () => {
-  it("injects overlays, screenshots, and removes overlays", async () => {
+  it("injects overlays with width/height, screenshots, and removes overlays", async () => {
     const { page, evaluateFn, screenshotFn } = createMockPage();
 
     const elements: A11yElement[] = [
@@ -28,12 +28,11 @@ describe("captureWithLabels", () => {
     // Should call evaluate twice: inject + remove
     expect(evaluateFn).toHaveBeenCalledTimes(2);
 
-    // First call: inject overlays with element data
+    // First call: inject overlays with element data including width/height
     const injectArgs = evaluateFn.mock.calls[0]!;
-    // Raw bounds passed; badge is offset -16px in the evaluate callback
     expect(injectArgs[1]).toEqual([
-      { label: 1, x: 100, y: 200 },
-      { label: 2, x: 50, y: 50 },
+      { label: 1, x: 100, y: 200, width: 80, height: 30 },
+      { label: 2, x: 50, y: 50, width: 60, height: 20 },
     ]);
 
     // Should take screenshot
@@ -56,7 +55,7 @@ describe("captureWithLabels", () => {
 
     const injectArgs = evaluateFn.mock.calls[0]!;
     expect(injectArgs[1]).toEqual([
-      { label: 1, x: 10, y: 20 },
+      { label: 1, x: 10, y: 20, width: 30, height: 15 },
     ]);
   });
 

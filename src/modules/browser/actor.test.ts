@@ -5,23 +5,25 @@ vi.mock("../../logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock("./a11y.js", () => ({
-  getInteractiveElements: vi.fn(),
+  getPageSnapshot: vi.fn(),
+  getScrollPosition: vi.fn(),
+  formatScrollContext: vi.fn(),
   formatA11yTree: vi.fn(),
 }));
 vi.mock("./set-of-mark.js", () => ({
   captureWithLabels: vi.fn(),
 }));
 vi.mock("./actions.js", () => ({
-  executeAction: vi.fn(),
+  executeActionWithRetry: vi.fn(),
   isActionResult: vi.fn((result: unknown) => typeof result === "object" && result !== null && (result as Record<string, unknown>).kind === "result"),
   takeScreenshot: vi.fn().mockResolvedValue(Buffer.from("screenshot")),
 }));
 
 import { resolveLabel, toolToBrowserAction, executeSubTask } from "./actor.js";
 import { getClient } from "../../ai/client.js";
-import { getInteractiveElements, formatA11yTree } from "./a11y.js";
+import { getPageSnapshot, getScrollPosition, formatScrollContext, formatA11yTree } from "./a11y.js";
 import { captureWithLabels } from "./set-of-mark.js";
-import { executeAction } from "./actions.js";
+import { executeActionWithRetry } from "./actions.js";
 import type { A11yElement, SubTask } from "./types.js";
 
 beforeEach(() => {
@@ -53,8 +55,8 @@ const elements: A11yElement[] = [
 ];
 
 describe("resolveLabel", () => {
-  it("resolves click by label to coordinates when bounds exist", () => {
-    const result = resolveLabel(
+  it("resolves click by label to coordinates when bounds exist", async () => {
+    const result = await resolveLabel(
       { action: "click", label: 1 } as never,
       elements,
     );
@@ -65,8 +67,8 @@ describe("resolveLabel", () => {
     });
   });
 
-  it("resolves click by label to locator when no bounds", () => {
-    const result = resolveLabel(
+  it("resolves click by label to locator when no bounds", async () => {
+    const result = await resolveLabel(
       { action: "click", label: 2 } as never,
       elements,
     );
@@ -76,8 +78,8 @@ describe("resolveLabel", () => {
     });
   });
 
-  it("returns error when label not found", () => {
-    const result = resolveLabel(
+  it("returns error when label not found", async () => {
+    const result = await resolveLabel(
       { action: "click", label: 99 } as never,
       elements,
     );
@@ -86,8 +88,8 @@ describe("resolveLabel", () => {
     });
   });
 
-  it("resolves hover by label to coordinates when bounds exist", () => {
-    const result = resolveLabel(
+  it("resolves hover by label to coordinates when bounds exist", async () => {
+    const result = await resolveLabel(
       { action: "hover", label: 3 } as never,
       elements,
     );
@@ -98,8 +100,8 @@ describe("resolveLabel", () => {
     });
   });
 
-  it("returns error for hover with unknown label", () => {
-    const result = resolveLabel(
+  it("returns error for hover with unknown label", async () => {
+    const result = await resolveLabel(
       { action: "hover", label: 50 } as never,
       elements,
     );
@@ -108,16 +110,59 @@ describe("resolveLabel", () => {
     });
   });
 
-  it("passes through actions without label field unchanged", () => {
+  it("passes through actions without label field unchanged", async () => {
     const action = { action: "click" as const, selector: "#my-button" };
-    const result = resolveLabel(action, elements);
+    const result = await resolveLabel(action, elements);
     expect(result).toEqual(action);
   });
 
-  it("passes through non-click/hover actions unchanged", () => {
+  it("passes through non-click/hover actions unchanged", async () => {
     const action = { action: "scroll" as const, direction: "down" as const, amount: 500 };
-    const result = resolveLabel(action, elements);
+    const result = await resolveLabel(action, elements);
     expect(result).toEqual(action);
+  });
+
+  it("uses fresh coordinates from page when available", async () => {
+    const mockPage = {
+      getByRole: vi.fn().mockReturnValue({
+        first: () => ({
+          boundingBox: vi.fn().mockResolvedValue({ x: 110, y: 210, width: 80, height: 30 }),
+        }),
+      }),
+    };
+
+    const result = await resolveLabel(
+      { action: "click", label: 1 } as never,
+      elements,
+      mockPage as never,
+    );
+    expect(result).toEqual({
+      action: "click",
+      x: 150, // 110 + 80/2
+      y: 225, // 210 + 30/2
+    });
+  });
+
+  it("falls back to cached bounds when fresh lookup fails", async () => {
+    const mockPage = {
+      getByRole: vi.fn().mockReturnValue({
+        first: () => ({
+          boundingBox: vi.fn().mockRejectedValue(new Error("timeout")),
+        }),
+      }),
+    };
+
+    const result = await resolveLabel(
+      { action: "click", label: 1 } as never,
+      elements,
+      mockPage as never,
+    );
+    // Falls back to cached bounds: 100 + 80/2 = 140, 200 + 30/2 = 215
+    expect(result).toEqual({
+      action: "click",
+      x: 140,
+      y: 215,
+    });
   });
 });
 
@@ -169,7 +214,9 @@ describe("executeSubTask", () => {
   }
 
   function setupMocks() {
-    vi.mocked(getInteractiveElements).mockResolvedValue(elements);
+    vi.mocked(getPageSnapshot).mockResolvedValue({ interactive: elements, structural: [] });
+    vi.mocked(getScrollPosition).mockResolvedValue({ scrollY: 0, scrollHeight: 800, viewportHeight: 800 });
+    vi.mocked(formatScrollContext).mockReturnValue("Viewport: full page visible (no scrollable content)");
     vi.mocked(formatA11yTree).mockReturnValue("[1] button \"Submit\"");
     vi.mocked(captureWithLabels).mockResolvedValue(Buffer.from("labeled-screenshot"));
   }
@@ -250,7 +297,7 @@ describe("executeSubTask", () => {
       messages: { create: mockCreate },
     } as never);
 
-    vi.mocked(executeAction).mockResolvedValueOnce({
+    vi.mocked(executeActionWithRetry).mockResolvedValueOnce({
       kind: "result",
       screenshot: Buffer.from("result-screenshot"),
       metadata: { url: "https://example.com/success", title: "Success" },
@@ -263,7 +310,7 @@ describe("executeSubTask", () => {
 
     expect(result.status).toBe("success");
     expect(mockCreate).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(executeAction)).toHaveBeenCalledOnce();
+    expect(vi.mocked(executeActionWithRetry)).toHaveBeenCalledOnce();
   });
 
   it("escalates after repeated failures", async () => {
@@ -280,7 +327,7 @@ describe("executeSubTask", () => {
       messages: { create: mockCreate },
     } as never);
 
-    vi.mocked(executeAction).mockResolvedValue({ kind: "error", error: "Element not found" });
+    vi.mocked(executeActionWithRetry).mockResolvedValue({ kind: "error", error: "Element not found" });
 
     const result = await executeSubTask(
       page,
@@ -361,7 +408,7 @@ describe("executeSubTask", () => {
       messages: { create: mockCreate },
     } as never);
 
-    vi.mocked(executeAction).mockResolvedValue({
+    vi.mocked(executeActionWithRetry).mockResolvedValue({
       kind: "result",
       screenshot: Buffer.from("error-screenshot"),
       metadata: { url: "https://example.com", title: "Example" },
@@ -392,7 +439,7 @@ describe("executeSubTask", () => {
       messages: { create: mockCreate },
     } as never);
 
-    vi.mocked(executeAction).mockResolvedValueOnce({
+    vi.mocked(executeActionWithRetry).mockResolvedValueOnce({
       kind: "result",
       screenshot: Buffer.from("result-screenshot"),
       metadata: { url: "https://example.com", title: "Example" },
@@ -433,7 +480,7 @@ describe("executeSubTask", () => {
       messages: { create: mockCreate },
     } as never);
 
-    vi.mocked(executeAction).mockResolvedValueOnce({
+    vi.mocked(executeActionWithRetry).mockResolvedValueOnce({
       kind: "result",
       screenshot: Buffer.from("error-screenshot"),
       metadata: { url: "https://duckduckgo.com", title: "Search" },
@@ -485,7 +532,7 @@ describe("executeSubTask", () => {
 
     // Should escalate without calling executeAction
     expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(executeAction).not.toHaveBeenCalled();
+    expect(executeActionWithRetry).not.toHaveBeenCalled();
     expect(result.status).toBe("escalate");
     if (result.status === "escalate") {
       expect(result.blockedUrl).toBe("https://www.opentable.com/r/folk");
@@ -518,7 +565,7 @@ describe("executeSubTask", () => {
           expect.objectContaining({ name: "task_complete" }),
           expect.objectContaining({ name: "need_input" }),
         ]),
-        tool_choice: { type: "any" },
+        tool_choice: { type: "auto" },
       }),
     );
   });

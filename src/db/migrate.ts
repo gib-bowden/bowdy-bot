@@ -113,6 +113,13 @@ export function ensureSchema(): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS browser_cookies (
+      domain TEXT PRIMARY KEY,
+      cookies_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS email_rules (
       id TEXT PRIMARY KEY,
       account_email TEXT,

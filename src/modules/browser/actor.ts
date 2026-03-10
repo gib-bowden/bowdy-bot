@@ -2,10 +2,10 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Page } from "playwright-core";
 import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
-import { getInteractiveElements, formatA11yTree } from "./a11y.js";
+import { getPageSnapshot, getScrollPosition, formatScrollContext, formatA11yTree } from "./a11y.js";
 import { captureWithLabels } from "./set-of-mark.js";
 import {
-  executeAction,
+  executeActionWithRetry,
   isActionResult,
   takeScreenshot,
   type BrowserAction,
@@ -15,6 +15,7 @@ import type {
   ActorResult,
   PageMetadata,
   A11yElement,
+  StructuralElement,
 } from "./types.js";
 import { recordSessionTurn } from "./eval/capture.js";
 
@@ -113,7 +114,7 @@ export const ACTOR_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "browser_scroll",
-    description: "Scroll the page or a specific container.",
+    description: "Scroll the page or a specific container. Current scroll position is reported in each observation.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -268,10 +269,11 @@ export function toolToBrowserAction(
   return { action, ...cleaned } as BrowserAction;
 }
 
-export function resolveLabel(
+export async function resolveLabel(
   action: BrowserAction,
   elements: A11yElement[],
-): BrowserAction | { error: string } {
+  page?: Page,
+): Promise<BrowserAction | { error: string }> {
   if (
     action.action === "click" &&
     "label" in action &&
@@ -283,11 +285,14 @@ export function resolveLabel(
         error: `Label [${action.label}] not found in accessibility tree`,
       };
     }
-    if (el.bounds) {
+
+    // Try fresh coordinate lookup when page is available
+    const bounds = await freshBounds(el, page);
+    if (bounds) {
       return {
         action: "click",
-        x: el.bounds.x + el.bounds.width / 2,
-        y: el.bounds.y + el.bounds.height / 2,
+        x: bounds.x + bounds.width / 2,
+        y: bounds.y + bounds.height / 2,
       };
     }
     return { action: "click", selector: el.locator };
@@ -300,17 +305,47 @@ export function resolveLabel(
         error: `Label [${action.label}] not found in accessibility tree`,
       };
     }
-    if (el.bounds) {
+
+    const bounds = await freshBounds(el, page);
+    if (bounds) {
       return {
         action: "hover",
-        x: el.bounds.x + el.bounds.width / 2,
-        y: el.bounds.y + el.bounds.height / 2,
+        x: bounds.x + bounds.width / 2,
+        y: bounds.y + bounds.height / 2,
       };
     }
     return { action: "hover", selector: el.locator };
   }
 
   return action;
+}
+
+/** Get fresh bounding box for an element, falling back to cached bounds. */
+async function freshBounds(
+  el: A11yElement,
+  page?: Page,
+): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  if (page && el.bounds) {
+    try {
+      const role = el.role as Parameters<Page["getByRole"]>[0];
+      const box = await page.getByRole(role, { name: el.name }).first().boundingBox({ timeout: 500 });
+      if (box && box.width > 0 && box.height > 0) {
+        // Warn if fresh coords differ significantly from cached (possible wrong element)
+        const dx = Math.abs(box.x + box.width / 2 - (el.bounds.x + el.bounds.width / 2));
+        const dy = Math.abs(box.y + box.height / 2 - (el.bounds.y + el.bounds.height / 2));
+        if (dx > 200 || dy > 200) {
+          logger.warn(
+            { role, name: el.name, cached: el.bounds, fresh: box },
+            "Fresh bounds differ significantly from cached — possible wrong element match",
+          );
+        }
+        return box;
+      }
+    } catch {
+      // Fall back to cached
+    }
+  }
+  return el.bounds ?? null;
 }
 
 function trimScreenshotHistory(messages: Anthropic.MessageParam[]): void {
@@ -411,8 +446,11 @@ export async function executeSubTask(
   // Build initial user message with screenshot + a11y tree
   let elements: A11yElement[];
   let labeledScreenshot: Buffer;
+  let structural;
   try {
-    elements = await getInteractiveElements(page);
+    const snapshot = await getPageSnapshot(page);
+    elements = snapshot.interactive;
+    structural = snapshot.structural;
     labeledScreenshot = await captureWithLabels(page, elements);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -426,7 +464,9 @@ export async function executeSubTask(
       metadata,
     };
   }
-  const a11yTree = formatA11yTree(elements);
+  const scrollInfo = await getScrollPosition(page);
+  const scrollLine = formatScrollContext(scrollInfo);
+  const a11yTree = formatA11yTree(elements, structural);
 
   messages.push({
     role: "user",
@@ -441,7 +481,7 @@ export async function executeSubTask(
       },
       {
         type: "text",
-        text: `Page: ${initialMetadata.url} — ${initialMetadata.title}\n\nAccessibility tree:\n${a11yTree}\n\nSub-task: ${subTask.instruction}`,
+        text: `Page: ${initialMetadata.url} — ${initialMetadata.title}\n${scrollLine}\n\nAccessibility tree:\n${a11yTree}\n\nSub-task: ${subTask.instruction}`,
       },
     ],
   });
@@ -656,7 +696,7 @@ export async function executeSubTask(
       }
 
       // Resolve label references
-      const resolved = resolveLabel(action, currentElements);
+      const resolved = await resolveLabel(action, currentElements, page);
       if ("error" in resolved) {
         consecutiveErrors++;
         logger.warn(
@@ -734,7 +774,7 @@ export async function executeSubTask(
         { actionsAttempted, action: resolved, batchIndex: i, batchSize: toolUseBlocks.length },
         "Actor executing action",
       );
-      const result = await executeAction(page, resolved);
+      const result = await executeActionWithRetry(page, resolved);
 
       if (!isActionResult(result)) {
         consecutiveErrors++;
@@ -923,12 +963,15 @@ export async function executeSubTask(
 
       let newLabeledScreenshot: Buffer;
       let newA11yTree: string;
+      let newStructural: StructuralElement[] | undefined;
       if (viewportOnly) {
         newLabeledScreenshot = await takeScreenshot(page);
         newA11yTree = formatA11yTree(currentElements);
       } else {
         try {
-          currentElements = await getInteractiveElements(page);
+          const snapshot = await getPageSnapshot(page);
+          currentElements = snapshot.interactive;
+          newStructural = snapshot.structural;
           newLabeledScreenshot = await captureWithLabels(page, currentElements);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -938,9 +981,11 @@ export async function executeSubTask(
           );
           newLabeledScreenshot = await takeScreenshot(page);
         }
-        newA11yTree = formatA11yTree(currentElements);
+        newA11yTree = formatA11yTree(currentElements, newStructural);
       }
       const metadata = await getPageMetadata(page);
+      const newScrollInfo = await getScrollPosition(page);
+      const newScrollLine = formatScrollContext(newScrollInfo);
 
       const toolResultContent: (
         | Anthropic.TextBlockParam
@@ -979,7 +1024,7 @@ export async function executeSubTask(
         },
         {
           type: "text",
-          text: `Page: ${metadata.url} — ${metadata.title}\n\nAccessibility tree:\n${newA11yTree}\n\nSub-task: ${subTask.instruction}`,
+          text: `Page: ${metadata.url} — ${metadata.title}\n${newScrollLine}\n\nAccessibility tree:\n${newA11yTree}\n\nSub-task: ${subTask.instruction}`,
         },
       );
 

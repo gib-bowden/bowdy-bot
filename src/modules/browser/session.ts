@@ -1,6 +1,8 @@
 import { Camoufox } from "camoufox-js";
 import type { Browser, Page } from "playwright-core";
 import { logger } from "../../logger.js";
+import { config } from "../../config.js";
+import { loadCookies } from "./cookies.js";
 
 let browser: Browser | null = null;
 let page: Page | null = null;
@@ -33,6 +35,9 @@ export async function getPage(): Promise<Page> {
   const b = browser!;
   if (!page || page.isClosed()) {
     const ctx = await b.newContext({ viewport: VIEWPORT });
+    if (config.tokenEncryptionKey) {
+      await loadCookies(ctx);
+    }
     page = await ctx.newPage();
   }
 

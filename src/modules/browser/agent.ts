@@ -1,6 +1,8 @@
 import { logger } from "../../logger.js";
+import { config } from "../../config.js";
 import { getPage } from "./session.js";
 import { validateUrl, takeScreenshot } from "./actions.js";
+import { saveCookies } from "./cookies.js";
 import { startSession, endSession } from "./eval/capture.js";
 import { runRouterLoop, ROUTER_MODEL } from "./router.js";
 import type { ProgressEntry, PageMetadata } from "./types.js";
@@ -88,6 +90,9 @@ export async function startBrowserTask(url: string, goal: string): Promise<Brows
     routerProgressLog = progressLog;
 
     if (result.status !== "needs_input") {
+      if (config.tokenEncryptionKey) {
+        await saveCookies(page).catch(() => {});
+      }
       endSession(result);
       resetSession();
     }
@@ -130,6 +135,9 @@ export async function continueBrowserTask(userResponse: string): Promise<Browser
     routerProgressLog = progressLog;
 
     if (result.status !== "needs_input") {
+      if (config.tokenEncryptionKey) {
+        await saveCookies(page).catch(() => {});
+      }
       endSession(result);
       resetSession();
     }

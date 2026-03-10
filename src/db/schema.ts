@@ -97,6 +97,13 @@ export const emailTriageItems = sqliteTable("email_triage_items", {
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
+export const browserCookies = sqliteTable("browser_cookies", {
+  domain: text("domain").primaryKey(),
+  cookiesJson: text("cookies_json").notNull(), // encrypted JSON
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
 export const emailRules = sqliteTable("email_rules", {
   id: text("id").primaryKey(), // ULID
   accountEmail: text("account_email"), // null = all accounts

@@ -50,6 +50,12 @@ export interface A11yElement {
   href?: string;
 }
 
+export interface StructuralElement {
+  tag: string;         // "h1", "h2", "nav", "main", etc.
+  text: string;
+  bounds?: { x: number; y: number; width: number; height: number };
+}
+
 export const DEFAULT_BROWSER_MODEL = "claude-sonnet-4-6";
 
 export type BrowserTaskResult =
