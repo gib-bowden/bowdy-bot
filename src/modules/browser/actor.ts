@@ -10,6 +10,8 @@ import {
   takeScreenshot,
   type BrowserAction,
 } from "./actions.js";
+import { getPageManager } from "./session.js";
+import { fillForm } from "./form-fill.js";
 import type {
   SubTask,
   ActorResult,
@@ -217,6 +219,31 @@ export const ACTOR_TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ["reason"],
+    },
+  },
+  {
+    name: "browser_close_popup",
+    description: "Close the current popup/tab and return to the main page.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
+    name: "browser_fill_form",
+    description:
+      "Fill multiple form fields at once with structured data. Automatically matches keys to form fields by name, label, placeholder, and type.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        fields: {
+          type: "object",
+          description:
+            'Key-value pairs to fill. Keys are field names (e.g. "first_name", "email"). Values are the text to fill.',
+          additionalProperties: { type: "string" },
+        },
+      },
+      required: ["fields"],
     },
   },
 ];
@@ -442,6 +469,7 @@ export async function executeSubTask(
   let actionsAttempted = 0;
   let textOnlyResponses = 0;
   const failedDomains = new Set<string>(blockedDomains);
+  const recentActions: Array<{ action: string; error: string }> = [];
 
   // Build initial user message with screenshot + a11y tree
   let elements: A11yElement[];
@@ -679,6 +707,162 @@ export async function executeSubTask(
         break;
       }
 
+      // --- Handle form fill ---
+
+      if (toolName === "browser_fill_form") {
+        const fields = toolInput["fields"] as Record<string, string> | undefined;
+        if (!fields || typeof fields !== "object") {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            is_error: true,
+            content: [{ type: "text", text: "browser_fill_form requires a 'fields' object" }],
+          });
+          toolResults.push(...stubResults(remaining));
+          actionsAttempted++;
+          break;
+        }
+
+        actionsAttempted++;
+        const result = await fillForm(page, fields);
+        consecutiveErrors = 0;
+
+        let summary = "";
+        if (result.filled.length > 0) {
+          summary += `Filled ${result.filled.length} field(s): ${result.filled.map((f) => `${f.key} → "${f.field}"`).join(", ")}`;
+        }
+        if (result.unmatched.length > 0) {
+          summary += `\nCould not match: ${result.unmatched.join(", ")}. Use browser_fill or browser_type to fill these individually.`;
+        }
+        if (result.filled.length === 0) {
+          summary = `No fields could be matched. Available keys: ${result.unmatched.join(", ")}. Use browser_fill or browser_type instead.`;
+        }
+
+        // Take screenshot after filling
+        try {
+          const snapshot = await getPageSnapshot(page);
+          currentElements = snapshot.interactive;
+          const newStructural = snapshot.structural;
+          const newLabeledScreenshot = await captureWithLabels(page, currentElements);
+          const metadata = await getPageMetadata(page);
+          const newScrollInfo = await getScrollPosition(page);
+          const newScrollLine = formatScrollContext(newScrollInfo);
+          const newA11yTree = formatA11yTree(currentElements, newStructural);
+
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            content: [
+              { type: "text", text: summary },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: newLabeledScreenshot.toString("base64"),
+                },
+              },
+              {
+                type: "text",
+                text: `Page: ${metadata.url} — ${metadata.title}\n${newScrollLine}\n\nAccessibility tree:\n${newA11yTree}\n\nSub-task: ${subTask.instruction}`,
+              },
+            ],
+          });
+        } catch {
+          const screenshot = await takeScreenshot(page);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            content: [
+              { type: "text", text: summary },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: screenshot.toString("base64"),
+                },
+              },
+            ],
+          });
+        }
+
+        toolResults.push(...stubResults(remaining));
+        break;
+      }
+
+      // --- Handle popup close ---
+
+      if (toolName === "browser_close_popup") {
+        const pm = getPageManager();
+        if (!pm.hasPopup()) {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            content: [{ type: "text", text: "No popup is currently open." }],
+          });
+          toolResults.push(...stubResults(remaining));
+          actionsAttempted++;
+          break;
+        }
+
+        const primaryPage = await pm.closePopup();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // Take screenshot of primary page and refresh a11y tree
+        try {
+          const snapshot = await getPageSnapshot(primaryPage);
+          currentElements = snapshot.interactive;
+          const newStructural = snapshot.structural;
+          const newLabeledScreenshot = await captureWithLabels(primaryPage, currentElements);
+          const metadata = await getPageMetadata(primaryPage);
+          const newScrollInfo = await getScrollPosition(primaryPage);
+          const newScrollLine = formatScrollContext(newScrollInfo);
+          const newA11yTree = formatA11yTree(currentElements, newStructural);
+
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: newLabeledScreenshot.toString("base64"),
+                },
+              },
+              {
+                type: "text",
+                text: `Popup closed. Back on main page.\nPage: ${metadata.url} — ${metadata.title}\n${newScrollLine}\n\nAccessibility tree:\n${newA11yTree}\n\nSub-task: ${subTask.instruction}`,
+              },
+            ],
+          });
+        } catch {
+          const screenshot = await takeScreenshot(primaryPage);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: screenshot.toString("base64"),
+                },
+              },
+              { type: "text", text: "Popup closed. Back on main page." },
+            ],
+          });
+        }
+
+        toolResults.push(...stubResults(remaining));
+        actionsAttempted++;
+        consecutiveErrors = 0;
+        break;
+      }
+
       // --- Handle browser action tools ---
 
       const action = toolToBrowserAction(toolName, toolInput);
@@ -717,6 +901,11 @@ export async function executeSubTask(
           subtask_id: subTask.id,
         });
 
+        recentActions.push({ action: action.action, error: resolved.error });
+        if (recentActions.length > 3) {
+          recentActions.shift();
+        }
+
         let errorText = `Action failed: ${resolved.error}. Try a different approach.`;
         if (consecutiveErrors >= 3) {
           errorText += `\n\n${RETRY_NUDGE}`;
@@ -740,6 +929,7 @@ export async function executeSubTask(
             ...(failedDomains.size > 0
               ? { failedDomains: [...failedDomains] }
               : {}),
+            lastActions: [...recentActions],
           };
         }
         actionsAttempted++;
@@ -778,6 +968,10 @@ export async function executeSubTask(
 
       if (!isActionResult(result)) {
         consecutiveErrors++;
+        recentActions.push({ action: resolved.action, error: result.error });
+        if (recentActions.length > 3) {
+          recentActions.shift();
+        }
 
         // Track failed domains for navigate actions
         if (resolved.action === "navigate" && resolved.url) {
@@ -851,6 +1045,7 @@ export async function executeSubTask(
             ...(failedDomains.size > 0
               ? { failedDomains: [...failedDomains] }
               : {}),
+            lastActions: [...recentActions],
           };
         }
         break;
@@ -879,6 +1074,10 @@ export async function executeSubTask(
       // Action succeeded (possibly with error)
       if (result.error) {
         consecutiveErrors++;
+        recentActions.push({ action: resolved.action, error: result.error });
+        if (recentActions.length > 3) {
+          recentActions.shift();
+        }
 
         // Track failed domains for navigate actions (screenshot was still captured)
         if (resolved.action === "navigate" && resolved.url) {
@@ -942,6 +1141,7 @@ export async function executeSubTask(
           ...(failedDomains.size > 0
             ? { failedDomains: [...failedDomains] }
             : {}),
+          lastActions: [...recentActions],
         };
         break;
       }

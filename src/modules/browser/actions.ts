@@ -1,5 +1,7 @@
 import type { Page, Frame } from "playwright-core";
 import { logger } from "../../logger.js";
+import { recordActionMetric } from "./metrics.js";
+import { getPageManager } from "./session.js";
 
 export type BrowserAction =
   | { action: "click"; selector?: string; x?: number; y?: number; label?: number }
@@ -61,6 +63,7 @@ export interface ActionResult {
   error?: string;
   unchanged?: boolean;
   popupFailedUrl?: string;
+  popupOpened?: boolean;
 }
 
 export interface ActionError {
@@ -222,21 +225,38 @@ export async function executeAction(
 
         page.context().off("page", popupHandler);
 
-        // If the click opened a new tab, switch to it.
-        // TODO: This works for navigational new tabs (target="_blank") but will break
-        // OAuth/payment popups (Stripe, Google sign-in) that rely on the popup's
-        // opener reference. Handle those cases once navigation-based evals are solid.
+        // If the click opened a new tab, use PageManager for multi-tab support
         if (popupPage) {
           const openedPage = popupPage as Page;
           await openedPage.waitForLoadState("load", { timeout: 10000 }).catch(() => {});
           const newUrl = openedPage.url();
-          await openedPage.close().catch(() => {});
+
+          const pm = getPageManager();
           if (newUrl && newUrl !== "about:blank") {
-            await page.goto(newUrl, { waitUntil: "load", timeout: 15000 })
-              .catch((err) => {
-                logger.warn({ err, newUrl }, "Failed to navigate to popup URL");
-                popupFailedUrl = newUrl;
-              });
+            if (!pm.hasPopup()) {
+              // First popup — keep it open for OAuth/payment flows
+              pm.openPopup(openedPage);
+              await settle(openedPage);
+              const screenshot = await takeScreenshot(openedPage);
+              const afterUrl = openedPage.url();
+              const afterTitle = await openedPage.title();
+              return {
+                kind: "result",
+                screenshot,
+                metadata: { url: afterUrl, title: afterTitle },
+                popupOpened: true,
+              };
+            } else {
+              // Second popup — fall back to close-and-navigate behavior
+              await openedPage.close().catch(() => {});
+              await page.goto(newUrl, { waitUntil: "load", timeout: 15000 })
+                .catch((err) => {
+                  logger.warn({ err, newUrl }, "Failed to navigate to popup URL");
+                  popupFailedUrl = newUrl;
+                });
+            }
+          } else {
+            await openedPage.close().catch(() => {});
           }
         }
 
@@ -391,20 +411,35 @@ export async function executeActionWithRetry(
   action: BrowserAction,
   maxRetries = 2,
 ): Promise<ActionResult | ActionError> {
+  const startTime = performance.now();
+  let retries = 0;
   let lastResult = await executeAction(page, action);
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const errorMsg = lastResult.error;
 
     if (!errorMsg || !isTransientError(errorMsg)) {
-      return lastResult;
+      break;
     }
 
+    retries++;
     const delay = 200 * Math.pow(2, attempt);
     logger.warn({ action: action.action, attempt: attempt + 1, delay }, "Retrying transient error");
     await new Promise((resolve) => setTimeout(resolve, delay));
     lastResult = await executeAction(page, action);
   }
+
+  const durationMs = Math.round(performance.now() - startTime);
+  const success = isActionResult(lastResult) && !lastResult.error;
+  const url = "url" in action ? (action as { url: string }).url : page.url();
+  recordActionMetric({
+    action: action.action,
+    success,
+    durationMs,
+    error: lastResult.error,
+    retries,
+    url,
+  });
 
   return lastResult;
 }

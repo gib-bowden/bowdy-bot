@@ -20,6 +20,7 @@ export type ActorResult =
       metadata: PageMetadata;
       blockedUrl?: string;
       failedDomains?: string[];
+      lastActions?: Array<{ action: string; error: string }>;
     };
 
 export interface VerifierResult {

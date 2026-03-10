@@ -104,6 +104,31 @@ export const browserCookies = sqliteTable("browser_cookies", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
+export const browserSessionMetrics = sqliteTable("browser_session_metrics", {
+  id: text("id").primaryKey(), // e.g. sess_<timestamp>_<random>
+  goal: text("goal").notNull(),
+  startUrl: text("start_url").notNull(),
+  status: text("status").notNull().default("running"), // running | done | error | needs_input | max_iterations
+  totalActions: integer("total_actions").notNull().default(0),
+  successfulActions: integer("successful_actions").notNull().default(0),
+  failedActions: integer("failed_actions").notNull().default(0),
+  totalDurationMs: integer("total_duration_ms"),
+  routerIterations: integer("router_iterations"),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
+export const browserActionMetrics = sqliteTable("browser_action_metrics", {
+  id: text("id").primaryKey(), // ULID
+  sessionId: text("session_id").notNull().references(() => browserSessionMetrics.id),
+  action: text("action").notNull(), // click, type, navigate, etc.
+  success: integer("success", { mode: "boolean" }).notNull(),
+  errorMessage: text("error_message"),
+  durationMs: integer("duration_ms").notNull(),
+  retryCount: integer("retry_count").notNull().default(0),
+  url: text("url"),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
 export const emailRules = sqliteTable("email_rules", {
   id: text("id").primaryKey(), // ULID
   accountEmail: text("account_email"), // null = all accounts

@@ -195,6 +195,26 @@ describe("toolToBrowserAction", () => {
   it("returns null for unknown tools", () => {
     expect(toolToBrowserAction("unknown_tool", {})).toBeNull();
   });
+
+  it("sanitizes string x containing 'x, y' into separate coordinates", () => {
+    const result = toolToBrowserAction("browser_click", { x: "1109, 342" });
+    expect(result).toEqual({ action: "click", x: 1109, y: 342 });
+  });
+
+  it("sanitizes string x with single value", () => {
+    const result = toolToBrowserAction("browser_click", { x: "500", y: 200 });
+    expect(result).toEqual({ action: "click", x: 500, y: 200 });
+  });
+
+  it("sanitizes string y to number", () => {
+    const result = toolToBrowserAction("browser_click", { x: 100, y: "250" });
+    expect(result).toEqual({ action: "click", x: 100, y: 250 });
+  });
+
+  it("passes through numeric x/y unchanged", () => {
+    const result = toolToBrowserAction("browser_click", { x: 100, y: 200 });
+    expect(result).toEqual({ action: "click", x: 100, y: 200 });
+  });
 });
 
 describe("executeSubTask", () => {
