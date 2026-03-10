@@ -9,7 +9,8 @@ import type { ProgressEntry, PageMetadata, SubTask, BrowserTaskResult } from "./
 import { DEFAULT_BROWSER_MODEL } from "./types.js";
 import { recordSessionTurn } from "./eval/capture.js";
 
-const MAX_ROUTER_ITERATIONS = 10;
+const MAX_ROUTER_ITERATIONS = 25; // Safety net — stall detection should kick in first
+const MAX_CONSECUTIVE_STALLS = 3; // Stop after 3 iterations with no forward progress
 export const ROUTER_MODEL = process.env["ROUTER_MODEL"] || DEFAULT_BROWSER_MODEL;
 
 const ROUTER_TOOLS: Anthropic.Tool[] = [
@@ -179,6 +180,7 @@ export async function runRouterLoop(
   }
 
   let lastOutcome: "success" | "failed" | "escalated" | null = null;
+  let consecutiveStalls = 0;
 
   for (let iteration = 0; iteration < MAX_ROUTER_ITERATIONS; iteration++) {
     logger.info({ iteration, goal: currentGoal }, "Router iteration");
@@ -214,6 +216,7 @@ export async function runRouterLoop(
       max_tokens: 1024,
       system: buildRouterSystemPrompt(currentGoal, progressLog, blockedDomains, failureHistory, recoveryCount),
       tools: ROUTER_TOOLS,
+      tool_choice: { type: "any" },
       messages,
     });
 
@@ -441,6 +444,26 @@ export async function runRouterLoop(
         currentMetadata = actorResult.metadata;
 
         lastOutcome = outcome;
+
+        if (outcome === "success") {
+          consecutiveStalls = 0;
+        } else {
+          consecutiveStalls++;
+          if (consecutiveStalls >= MAX_CONSECUTIVE_STALLS) {
+            logger.warn(
+              { iteration, consecutiveStalls },
+              "Router stalled — too many consecutive failures",
+            );
+            return {
+              result: {
+                status: "max_iterations",
+                summary: `Stopped after ${consecutiveStalls} consecutive failed sub-tasks. Progress: ${formatProgressLog(progressLog)}`,
+              },
+              progressLog,
+              routerIterations: iteration + 1,
+            };
+          }
+        }
 
         logger.info(
           { iteration, outcome, stateDescription: stateDescription.slice(0, 200) },
