@@ -19,6 +19,7 @@ export interface SessionTurn {
     | "error_no_screenshot"
     | "parse_failure"
     | "signal_done"
+    | "signal_failed"
     | "signal_need_input";
   action_error?: string;
   screenshot_file: string | null;

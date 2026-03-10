@@ -15,6 +15,8 @@ export interface E2EScenario {
   /** Keys are topic names, values are responses. null = terminal (eval stops). */
   inputs: Record<string, string | null>;
   maxTurns?: number;
+  /** What counts as success: "terminal_reached" (default) or "done" (task completed without login). */
+  expectedOutcome?: "terminal_reached" | "done";
 }
 
 export interface E2ETurn {
@@ -149,7 +151,7 @@ Goal specificity: ${scenario.specificity} (${
 
 Information available (what the user knows):
 ${Object.entries(scenario.inputs)
-  .map(([k, v]) => `- ${k}: ${v === null ? "(credentials/payment — terminal)" : v}`)
+  .map(([k, v]) => `- ${k}: ${v === null ? (scenario.expectedOutcome === "done" ? "(not needed)" : "(credentials/payment — terminal)") : v}`)
   .join("\n")}
 
 Questions the assistant asked (in order):
@@ -205,6 +207,7 @@ export function computeScorecard(
   subtaskCount: number,
   turnCount: number,
   durationMs: number,
+  expectedOutcome: "terminal_reached" | "done" = "terminal_reached",
 ): E2EScorecard {
   const terminalPoints = terminalReached ? WEIGHT_TERMINAL : 0;
   const questionPoints = (questionScore / questionMaxScore) * WEIGHT_QUESTIONS;
@@ -215,13 +218,20 @@ export function computeScorecard(
   const efficiencyRatio = subtaskRatio * 0.7 + durationRatio * 0.3;
   const efficiencyPoints = efficiencyRatio * WEIGHT_EFFICIENCY;
 
+  const passDetails =
+    expectedOutcome === "done"
+      ? terminalReached
+        ? "Completed task successfully"
+        : "Did NOT complete task"
+      : terminalReached
+        ? "Reached terminal state (credentials/payment)"
+        : "Did NOT reach terminal state";
+
   return {
     terminalReached: {
       pass: terminalReached,
       weight: WEIGHT_TERMINAL,
-      details: terminalReached
-        ? "Reached terminal state (credentials/payment)"
-        : "Did NOT reach terminal state",
+      details: passDetails,
     },
     questionQuality: {
       score: questionScore,

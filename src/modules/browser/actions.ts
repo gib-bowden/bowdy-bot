@@ -5,7 +5,7 @@ export type BrowserAction =
   | { action: "click"; selector?: string; x?: number; y?: number; label?: number }
   | { action: "type"; selector?: string; text: string; press_enter?: boolean }
   | { action: "select"; selector: string; value?: string; label?: string }
-  | { action: "scroll"; direction: "up" | "down"; amount?: number }
+  | { action: "scroll"; direction: "up" | "down"; selector?: string; x?: number; y?: number }
   | { action: "wait"; seconds?: number }
   | { action: "go_back" }
   | { action: "navigate"; url: string }
@@ -198,8 +198,21 @@ export async function executeAction(
         break;
 
       case "scroll": {
-        const amount = action.amount ?? 500;
-        const delta = action.direction === "down" ? amount : -amount;
+        const delta = action.direction === "down" ? 500 : -500;
+        if (action.selector) {
+          const selector = action.selector;
+          const box = await tryInFrames(page, async (f) => {
+            const el = f.locator(selector).first();
+            return await el.boundingBox({ timeout: FRAME_TIMEOUT_MS });
+          });
+          if (box) {
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          } else {
+            logger.warn({ selector }, "Scroll target not found, scrolling at current mouse position");
+          }
+        } else if (action.x !== undefined && action.y !== undefined) {
+          await page.mouse.move(action.x, action.y);
+        }
         await page.mouse.wheel(0, delta);
         await new Promise((resolve) => setTimeout(resolve, 500));
         break;

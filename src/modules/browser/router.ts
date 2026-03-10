@@ -15,7 +15,7 @@ const ROUTER_TOOLS: Anthropic.Tool[] = [
   {
     name: "dispatch_subtask",
     description:
-      "Dispatch a sub-task to the Actor for execution. The Actor can see the page and interact with it. Give action-oriented instructions (click, fill, navigate) — the Actor should make progress toward the goal, not just observe and report back.",
+      "Dispatch a sub-task to the browser Actor, which can see and interact with the current page.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -86,28 +86,15 @@ function buildRouterSystemPrompt(
     day: "numeric",
   });
 
-  let prompt = `You are a browser automation planner. You receive the current page URL/title and a progress log. On the first iteration and after failures, you also receive a screenshot.
+  let prompt = `You plan and execute tasks in a web browser. Today is ${dateStr}.
 
-Today is ${dateStr}.
-
-Your goal: ${goal}
-
-Use your tools to accomplish the goal:
-- dispatch_subtask: Break the goal into specific, small steps and dispatch them one at a time
-- signal_done: When the goal is fully accomplished
-- signal_needs_input: When you need information from the user (credentials, choices, etc.)
-
-Guidelines:
-- Use the search engine on the current page to discover URLs before navigating. Only navigate directly to URLs you found in search results or on the current page.
-- Write action-oriented sub-task instructions — tell the Actor to DO things (click, fill, submit), not to scout and report back. The Actor should take actions toward the goal, not describe what it sees.
-- When a sub-task is escalated or failed, adapt your strategy for the next attempt. Do NOT retry the same approach.
-- Always resolve relative dates (e.g. "this Friday", "tomorrow") to concrete dates in sub-task instructions so the Actor knows exactly what to select.`;
+Your goal: ${goal}`;
 
   if (blockedDomains.size > 0) {
-    prompt += `\n\nBLOCKED DOMAINS (unreachable, do not use): ${[...blockedDomains].join(", ")}`;
+    prompt += `\n\nBlocked domains: ${[...blockedDomains].join(", ")}`;
   }
 
-  prompt += `\n\nProgress so far:\n${formatProgressLog(progressLog)}\n\nProvide brief reasoning before each tool call.`;
+  prompt += `\n\nProgress so far:\n${formatProgressLog(progressLog)}`;
   return prompt;
 }
 

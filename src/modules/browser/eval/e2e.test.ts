@@ -30,6 +30,7 @@ const SCREENSHOTS_DIR = join(__dirname, "e2e-screenshots");
 
 const DEFAULT_MAX_TURNS = 8;
 const DEFAULT_TIMEOUT_MS = 180_000; // 3 minutes per scenario
+const TIMEOUT_PER_TURN_MS = 25_000; // extra time per turn above default
 const SETTLE_MS = 1500;
 
 function loadScenarios(): E2EScenario[] {
@@ -213,7 +214,11 @@ async function buildResult(
   error?: string,
 ): Promise<E2EResult> {
   const durationMs = Date.now() - startTime;
-  const terminalReached = status === "terminal_reached";
+  const expectedOutcome = scenario.expectedOutcome ?? "terminal_reached";
+  const terminalReached =
+    expectedOutcome === "done"
+      ? status === "done"
+      : status === "terminal_reached";
 
   const { score, maxScore, details } = await scoreQuestionQuality(
     scenario,
@@ -233,6 +238,7 @@ async function buildResult(
     subtaskCount,
     turns.length,
     durationMs,
+    expectedOutcome,
   );
 
   return {
@@ -346,9 +352,12 @@ describe("E2E browser evals", () => {
   });
 
   for (const scenario of scenarios) {
+    const maxTurns = scenario.maxTurns ?? DEFAULT_MAX_TURNS;
+    const scenarioTimeout = DEFAULT_TIMEOUT_MS + Math.max(0, maxTurns - DEFAULT_MAX_TURNS) * TIMEOUT_PER_TURN_MS;
+
     it(
-      `${scenario.id}: navigates to terminal state`,
-      { timeout: DEFAULT_TIMEOUT_MS, retry: 1 },
+      `${scenario.id}: ${scenario.expectedOutcome === "done" ? "completes task" : "navigates to terminal state"}`,
+      { timeout: scenarioTimeout, retry: 1 },
       async () => {
         const page = await browser.newPage({
           viewport: { width: 1280, height: 720 },
