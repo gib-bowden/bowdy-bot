@@ -49,7 +49,8 @@ const ROUTER_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "signal_needs_input",
-    description: "Signal that user input is needed to continue.",
+    description:
+      "Ask the user for information the goal requires that hasn't been provided. Use this whenever the next step depends on details like credentials, personal info, preferences, or ambiguous choices. This is the only way to get information from the user — the Actor cannot ask them directly.",
     input_schema: {
       type: "object" as const,
       properties: {

@@ -197,7 +197,8 @@ export const ACTOR_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "need_input",
-    description: "Signal that user input is needed to continue.",
+    description:
+      "Ask the user for information the sub-task requires that wasn't included in the instruction (e.g. credentials, personal info, preferences). This is the only way to get information from the user — you cannot ask them through the page.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -463,7 +464,7 @@ export async function executeSubTask(
   blockedDomains?: Set<string>,
 ): Promise<ActorResult> {
   const client = getClient();
-  const maxAttempts = subTask.maxAttempts || 8;
+  const maxAttempts = subTask.maxAttempts || 12;
   const messages: Anthropic.MessageParam[] = [];
   let consecutiveErrors = 0;
   let actionsAttempted = 0;
