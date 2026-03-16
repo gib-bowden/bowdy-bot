@@ -1,4 +1,4 @@
-import type { Page, Frame } from "playwright-core";
+import type { Page, Frame, Locator, Request as PwRequest, Response as PwResponse } from "playwright-core";
 import { logger } from "../../logger.js";
 import { recordActionMetric } from "./metrics.js";
 import { getPageManager } from "./session.js";
@@ -64,6 +64,7 @@ export interface ActionResult {
   unchanged?: boolean;
   popupFailedUrl?: string;
   popupOpened?: boolean;
+  dialogInfo?: { type: string; message: string };
 }
 
 export interface ActionError {
@@ -75,11 +76,11 @@ export async function takeScreenshot(page: Page): Promise<Buffer> {
   return await page.screenshot({ type: "jpeg", quality: 70 });
 }
 
-async function settle(page: Page): Promise<void> {
-  // Phase 1: Wait for network idle (3s timeout for long-polling/websocket pages)
-  await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
-
-  // Phase 2: Wait for DOM stability — resolve after 500ms of no mutations, hard cap 2s
+/**
+ * Lightweight DOM mutation observer — resolves after 200ms of no mutations, 1s hard cap.
+ * Used as a secondary safety net after network-aware settling.
+ */
+async function briefDomSettle(page: Page): Promise<void> {
   await page.evaluate(() => {
     return new Promise<void>((resolve) => {
       if (!document.body) {
@@ -90,8 +91,8 @@ async function settle(page: Page): Promise<void> {
       let settled = false;
       let quietTimer: ReturnType<typeof setTimeout> | null = null;
       let hardCapTimer: ReturnType<typeof setTimeout> | null = null;
-      const QUIET_MS = 500;
-      const HARD_CAP_MS = 2000;
+      const QUIET_MS = 200;
+      const HARD_CAP_MS = 1000;
 
       const finish = () => {
         if (settled) {
@@ -121,13 +122,65 @@ async function settle(page: Page): Promise<void> {
         attributes: true,
       });
 
-      // Start the quiet timer immediately (resolves if no mutations at all)
       quietTimer = setTimeout(finish, QUIET_MS);
-
-      // Hard cap for continuously-animated pages
       hardCapTimer = setTimeout(finish, HARD_CAP_MS);
     });
   }).catch(() => {});
+}
+
+/**
+ * Request-aware settling: wraps an action callback, tracks network requests,
+ * and waits appropriately based on whether a navigation or XHR occurred.
+ */
+async function waitForCompletion<T>(page: Page, callback: () => Promise<T>): Promise<T> {
+  let sawDocumentRequest = false;
+  let pendingRequests = 0;
+
+  const onRequest = (req: PwRequest) => {
+    if (req.resourceType() === "document") {
+      sawDocumentRequest = true;
+    }
+    if (req.resourceType() === "fetch" || req.resourceType() === "xhr") {
+      pendingRequests++;
+    }
+  };
+  const onResponse = (res: PwResponse) => {
+    const req = res.request();
+    if (req.resourceType() === "fetch" || req.resourceType() === "xhr") {
+      pendingRequests = Math.max(0, pendingRequests - 1);
+    }
+  };
+  const onRequestFailed = (req: PwRequest) => {
+    if (req.resourceType() === "fetch" || req.resourceType() === "xhr") {
+      pendingRequests = Math.max(0, pendingRequests - 1);
+    }
+  };
+
+  page.on("request", onRequest);
+  page.on("response", onResponse);
+  page.on("requestfailed", onRequestFailed);
+
+  try {
+    const result = await callback();
+
+    if (sawDocumentRequest) {
+      // Navigation occurred — wait for full network idle
+      await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    } else if (pendingRequests > 0) {
+      // XHR/fetch in flight — poll until resolved (5s timeout)
+      const deadline = Date.now() + 5000;
+      while (pendingRequests > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+
+    await briefDomSettle(page);
+    return result;
+  } finally {
+    page.off("request", onRequest);
+    page.off("response", onResponse);
+    page.off("requestfailed", onRequestFailed);
+  }
 }
 
 const FRAME_TIMEOUT_MS = 2000;
@@ -180,6 +233,27 @@ async function tryInFrames<T>(page: Page, fn: (frame: Frame) => Promise<T>): Pro
   }
 }
 
+// --- Frame-aware locator resolution ---
+
+const GET_BY_ROLE_RE = /^getByRole\('([^']+)'(?:,\s*\{\s*name:\s*'(.*)'\s*\})?\)$/;
+
+/**
+ * Parse a Playwright-style locator string and return a Locator that auto-traverses frames.
+ * Returns null if the string doesn't match the expected pattern.
+ */
+export function resolveLocator(page: Page, selector: string): Locator | null {
+  const match = selector.match(GET_BY_ROLE_RE);
+  if (!match) {
+    return null;
+  }
+  const role = match[1] as Parameters<Page["getByRole"]>[0];
+  const name = match[2]?.replace(/\\'/g, "'");
+  if (name) {
+    return page.getByRole(role, { name }).first();
+  }
+  return page.getByRole(role).first();
+}
+
 export async function executeAction(
   page: Page,
   action: BrowserAction,
@@ -197,8 +271,7 @@ export async function executeAction(
         if (urlError) {
           return { kind: "error", error: urlError };
         }
-        await page.goto(action.url, { waitUntil: "load", timeout: 15000 });
-        await settle(page);
+        await waitForCompletion(page, () => page.goto(action.url, { waitUntil: "load", timeout: 15000 }));
         break;
       }
 
@@ -210,14 +283,23 @@ export async function executeAction(
 
         if (action.selector) {
           const selector = action.selector;
-          try {
-            await tryInFrames(page, (f) => f.click(selector, { timeout: FRAME_TIMEOUT_MS }));
-          } catch {
-            // Retry with force if an overlay/navbar intercepts the click
-            await tryInFrames(page, (f) => f.click(selector, { force: true, timeout: FRAME_TIMEOUT_MS }));
+          const loc = resolveLocator(page, selector);
+          if (loc) {
+            try {
+              await waitForCompletion(page, () => loc.click({ timeout: FRAME_TIMEOUT_MS }));
+            } catch {
+              await waitForCompletion(page, () => loc.click({ force: true, timeout: FRAME_TIMEOUT_MS }));
+            }
+          } else {
+            try {
+              await waitForCompletion(page, () => tryInFrames(page, (f) => f.click(selector, { timeout: FRAME_TIMEOUT_MS })));
+            } catch {
+              // Retry with force if an overlay/navbar intercepts the click
+              await waitForCompletion(page, () => tryInFrames(page, (f) => f.click(selector, { force: true, timeout: FRAME_TIMEOUT_MS })));
+            }
           }
         } else if (action.x !== undefined && action.y !== undefined) {
-          await page.mouse.click(action.x, action.y);
+          await waitForCompletion(page, () => page.mouse.click(action.x!, action.y!));
         } else {
           page.context().off("page", popupHandler);
           return { kind: "error", error: "click requires selector or x/y coordinates" };
@@ -236,7 +318,7 @@ export async function executeAction(
             if (!pm.hasPopup()) {
               // First popup — keep it open for OAuth/payment flows
               pm.openPopup(openedPage);
-              await settle(openedPage);
+              await briefDomSettle(openedPage);
               const screenshot = await takeScreenshot(openedPage);
               const afterUrl = openedPage.url();
               const afterTitle = await openedPage.title();
@@ -260,39 +342,46 @@ export async function executeAction(
           }
         }
 
-        await settle(page);
         break;
       }
 
       case "type":
         if (action.selector) {
           const selector = action.selector;
-          try {
-            await tryInFrames(page, (f) => f.fill(selector, action.text, { timeout: FRAME_TIMEOUT_MS }));
-          } catch {
-            logger.warn({ selector: action.selector }, "fill failed across all frames, falling back to keyboard.type");
-            await page.keyboard.type(action.text);
+          const loc = resolveLocator(page, selector);
+          if (loc) {
+            try {
+              await loc.fill(action.text, { timeout: FRAME_TIMEOUT_MS });
+            } catch {
+              logger.warn({ selector }, "locator fill failed, falling back to keyboard.type");
+              await page.keyboard.type(action.text);
+            }
+          } else {
+            try {
+              await tryInFrames(page, (f) => f.fill(selector, action.text, { timeout: FRAME_TIMEOUT_MS }));
+            } catch {
+              logger.warn({ selector }, "fill failed across all frames, falling back to keyboard.type");
+              await page.keyboard.type(action.text);
+            }
           }
         } else {
           await page.keyboard.type(action.text);
         }
         if (action.press_enter) {
-          await page.keyboard.press("Enter");
-          await settle(page);
+          await waitForCompletion(page, () => page.keyboard.press("Enter"));
         }
         break;
 
       case "select":
         if (action.label) {
           const label = action.label;
-          await tryInFrames(page, (f) => f.selectOption(action.selector, { label }, { timeout: FRAME_TIMEOUT_MS }));
+          await waitForCompletion(page, () => tryInFrames(page, (f) => f.selectOption(action.selector, { label }, { timeout: FRAME_TIMEOUT_MS })));
         } else if (action.value) {
           const value = action.value;
-          await tryInFrames(page, (f) => f.selectOption(action.selector, value, { timeout: FRAME_TIMEOUT_MS }));
+          await waitForCompletion(page, () => tryInFrames(page, (f) => f.selectOption(action.selector, value, { timeout: FRAME_TIMEOUT_MS })));
         } else {
           return { kind: "error", error: "select requires value or label" };
         }
-        await settle(page);
         break;
 
       case "scroll": {
@@ -323,36 +412,45 @@ export async function executeAction(
       }
 
       case "go_back":
-        await page.goBack({ waitUntil: "load", timeout: 10000 }).catch(() => {});
-        await settle(page);
+        await waitForCompletion(page, () => page.goBack({ waitUntil: "load", timeout: 10000 }).catch(() => null));
         break;
 
       case "hover":
         if (action.selector) {
           const selector = action.selector;
-          await tryInFrames(page, (f) => f.hover(selector, { timeout: FRAME_TIMEOUT_MS }));
+          const loc = resolveLocator(page, selector);
+          if (loc) {
+            await loc.hover({ timeout: FRAME_TIMEOUT_MS });
+          } else {
+            await tryInFrames(page, (f) => f.hover(selector, { timeout: FRAME_TIMEOUT_MS }));
+          }
         } else if (action.x !== undefined && action.y !== undefined) {
           await page.mouse.move(action.x, action.y);
         } else {
           return { kind: "error", error: "hover requires selector or x/y coordinates" };
         }
-        await settle(page);
+        await briefDomSettle(page);
         break;
 
       case "press_key": {
         const KEY_ALIASES: Record<string, string> = { Return: "Enter", Esc: "Escape" };
         const resolvedKey = KEY_ALIASES[action.key] || action.key;
-        await page.keyboard.press(resolvedKey);
         if (resolvedKey === "Enter" || resolvedKey === "Escape" || resolvedKey === "Tab") {
-          await settle(page);
+          await waitForCompletion(page, () => page.keyboard.press(resolvedKey));
+        } else {
+          await page.keyboard.press(resolvedKey);
         }
         break;
       }
 
       case "fill": {
         const fillSelector = action.selector;
-        await tryInFrames(page, (f) => f.fill(fillSelector, action.text, { timeout: FRAME_TIMEOUT_MS }));
-        await settle(page);
+        const loc = resolveLocator(page, fillSelector);
+        if (loc) {
+          await waitForCompletion(page, () => loc.fill(action.text, { timeout: FRAME_TIMEOUT_MS }));
+        } else {
+          await waitForCompletion(page, () => tryInFrames(page, (f) => f.fill(fillSelector, action.text, { timeout: FRAME_TIMEOUT_MS })));
+        }
         break;
       }
 
@@ -364,6 +462,13 @@ export async function executeAction(
         return { kind: "error", error: `Unknown action: ${(action as BrowserAction).action}` };
     }
 
+    // Check for pending dialogs after action
+    const pm = getPageManager();
+    const pendingDialog = pm.getDialogManager().pending();
+    const dialogInfo = pendingDialog
+      ? { type: pendingDialog.type, message: pendingDialog.message }
+      : undefined;
+
     const screenshot = await takeScreenshot(page);
     const afterUrl = page.url();
     const afterTitle = await page.title();
@@ -374,6 +479,7 @@ export async function executeAction(
       metadata: { url: afterUrl, title: afterTitle },
       ...(unchanged ? { unchanged: true } : {}),
       ...(popupFailedUrl ? { popupFailedUrl } : {}),
+      ...(dialogInfo ? { dialogInfo } : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

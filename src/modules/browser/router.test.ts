@@ -22,7 +22,11 @@ function mockPage() {
   } as never;
 }
 
-function mockClient(responses: Array<{ content: Array<{ type: string; [key: string]: unknown }> }>) {
+function mockClient(
+  responses: Array<{
+    content: Array<{ type: string; [key: string]: unknown }>;
+  }>,
+) {
   let callIndex = 0;
   return {
     messages: {
@@ -38,7 +42,10 @@ function mockClient(responses: Array<{ content: Array<{ type: string; [key: stri
   };
 }
 
-const defaultMetadata: PageMetadata = { url: "https://example.com", title: "Example" };
+const defaultMetadata: PageMetadata = {
+  url: "https://example.com",
+  title: "Example",
+};
 const screenshot = Buffer.from("fake-screenshot");
 
 beforeEach(() => {
@@ -63,7 +70,12 @@ describe("runRouterLoop", () => {
     vi.mocked(getClient).mockReturnValue(client as never);
 
     const page = mockPage();
-    const { result, progressLog } = await runRouterLoop(page, "test goal", screenshot, defaultMetadata);
+    const { result, progressLog } = await runRouterLoop(
+      page,
+      "test goal",
+      screenshot,
+      defaultMetadata,
+    );
 
     expect(result.status).toBe("done");
     if (result.status === "done") {
@@ -89,7 +101,12 @@ describe("runRouterLoop", () => {
     vi.mocked(getClient).mockReturnValue(client as never);
 
     const page = mockPage();
-    const { result } = await runRouterLoop(page, "test goal", screenshot, defaultMetadata);
+    const { result } = await runRouterLoop(
+      page,
+      "test goal",
+      screenshot,
+      defaultMetadata,
+    );
 
     expect(result.status).toBe("needs_input");
     if (result.status === "needs_input") {
@@ -145,18 +162,27 @@ describe("runRouterLoop", () => {
     vi.mocked(getClient).mockReturnValue(client as never);
 
     const page = mockPage();
-    const { result, progressLog } = await runRouterLoop(page, "submit the form", screenshot, defaultMetadata);
+    const { result, progressLog } = await runRouterLoop(
+      page,
+      "submit the form",
+      screenshot,
+      defaultMetadata,
+    );
 
     expect(result.status).toBe("done");
     expect(progressLog).toHaveLength(1);
     expect(progressLog[0]!.outcome).toBe("success");
-    expect(progressLog[0]!.stateDescription).toBe("Button was clicked, now on next page");
+    expect(progressLog[0]!.stateDescription).toBe(
+      "Button was clicked, now on next page",
+    );
 
     // Verify the Actor was called with correct subtask
     expect(executeSubTask).toHaveBeenCalledOnce();
     const subTaskArg = vi.mocked(executeSubTask).mock.calls[0]![1];
     expect(subTaskArg.instruction).toBe("Click the submit button");
-    expect(subTaskArg.successCriteria).toBe("Form is submitted and confirmation shown");
+    expect(subTaskArg.successCriteria).toBe(
+      "Form is submitted and confirmation shown",
+    );
 
     // Verify the Verifier was called
     expect(verify).toHaveBeenCalledOnce();
@@ -201,12 +227,19 @@ describe("runRouterLoop", () => {
     vi.mocked(getClient).mockReturnValue(client as never);
 
     const page = mockPage();
-    const { result, progressLog } = await runRouterLoop(page, "submit form", screenshot, defaultMetadata);
+    const { result, progressLog } = await runRouterLoop(
+      page,
+      "submit form",
+      screenshot,
+      defaultMetadata,
+    );
 
     expect(result.status).toBe("done");
     expect(progressLog).toHaveLength(1);
     expect(progressLog[0]!.outcome).toBe("escalated");
-    expect(progressLog[0]!.stateDescription).toBe("Cannot find the submit button");
+    expect(progressLog[0]!.stateDescription).toBe(
+      "Cannot find the submit button",
+    );
 
     // Verifier should NOT be called for escalated results
     expect(verify).not.toHaveBeenCalled();
@@ -256,7 +289,12 @@ describe("runRouterLoop", () => {
     vi.mocked(getClient).mockReturnValue(client as never);
 
     const page = mockPage();
-    const { result, progressLog } = await runRouterLoop(page, "submit form", screenshot, defaultMetadata);
+    const { result, progressLog } = await runRouterLoop(
+      page,
+      "submit form",
+      screenshot,
+      defaultMetadata,
+    );
 
     expect(result.status).toBe("done");
     expect(progressLog).toHaveLength(1);
@@ -281,7 +319,9 @@ describe("runRouterLoop", () => {
     const page = mockPage();
     await runRouterLoop(page, "test goal", screenshot, defaultMetadata);
 
-    const createCall = vi.mocked(client.messages.create).mock.calls[0]![0] as { tool_choice: { type: string } };
+    const createCall = vi.mocked(client.messages.create).mock.calls[0]![0] as {
+      tool_choice: { type: string };
+    };
     expect(createCall.tool_choice).toEqual({ type: "any" });
   });
 
@@ -289,9 +329,7 @@ describe("runRouterLoop", () => {
     const client = mockClient([
       // First: text only, no tool_use (shouldn't happen with tool_choice: any, but safety net)
       {
-        content: [
-          { type: "text", text: "Let me think about this..." },
-        ],
+        content: [{ type: "text", text: "Let me think about this..." }],
       },
       // Second: proper tool call
       {
@@ -308,7 +346,12 @@ describe("runRouterLoop", () => {
     vi.mocked(getClient).mockReturnValue(client as never);
 
     const page = mockPage();
-    const { result } = await runRouterLoop(page, "test goal", screenshot, defaultMetadata);
+    const { result } = await runRouterLoop(
+      page,
+      "test goal",
+      screenshot,
+      defaultMetadata,
+    );
 
     expect(result.status).toBe("done");
     // Should have called the API twice
@@ -325,7 +368,12 @@ describe("runRouterLoop", () => {
     vi.mocked(getClient).mockReturnValue(client as never);
 
     const page = mockPage();
-    const { result } = await runRouterLoop(page, "impossible goal", screenshot, defaultMetadata);
+    const { result } = await runRouterLoop(
+      page,
+      "impossible goal",
+      screenshot,
+      defaultMetadata,
+    );
 
     expect(result.status).toBe("max_iterations");
   });
@@ -376,10 +424,14 @@ describe("runRouterLoop", () => {
 
     const page = mockPage();
     const { result, progressLog, routerIterations } = await runRouterLoop(
-      page, "impossible task", screenshot, defaultMetadata,
+      page,
+      "impossible task",
+      screenshot,
+      defaultMetadata,
     );
 
     expect(result.status).toBe("max_iterations");
+    // @ts-ignore
     expect(result.summary).toContain("consecutive failed sub-tasks");
     expect(progressLog).toHaveLength(3);
     expect(routerIterations).toBe(3); // Stopped at 3, not 25
@@ -425,11 +477,11 @@ describe("runRouterLoop", () => {
     });
 
     const client = mockClient([
-      dispatchResponse("c1", "Try 1"),   // fail (stalls: 1)
-      dispatchResponse("c2", "Try 2"),   // fail (stalls: 2)
-      dispatchResponse("c3", "Try 3"),   // success (stalls: 0)
-      dispatchResponse("c4", "Try 4"),   // fail (stalls: 1)
-      dispatchResponse("c5", "Try 5"),   // fail (stalls: 2)
+      dispatchResponse("c1", "Try 1"), // fail (stalls: 1)
+      dispatchResponse("c2", "Try 2"), // fail (stalls: 2)
+      dispatchResponse("c3", "Try 3"), // success (stalls: 0)
+      dispatchResponse("c4", "Try 4"), // fail (stalls: 1)
+      dispatchResponse("c5", "Try 5"), // fail (stalls: 2)
       {
         content: [
           {
@@ -445,7 +497,10 @@ describe("runRouterLoop", () => {
 
     const page = mockPage();
     const { result, progressLog } = await runRouterLoop(
-      page, "test goal", screenshot, defaultMetadata,
+      page,
+      "test goal",
+      screenshot,
+      defaultMetadata,
     );
 
     // Should complete, not stall — because the success in the middle reset the counter
@@ -479,7 +534,12 @@ describe("runRouterLoop", () => {
     vi.mocked(getClient).mockReturnValue(client as never);
 
     const page = mockPage();
-    const { result, progressLog } = await runRouterLoop(page, "log in", screenshot, defaultMetadata);
+    const { result, progressLog } = await runRouterLoop(
+      page,
+      "log in",
+      screenshot,
+      defaultMetadata,
+    );
 
     expect(result.status).toBe("needs_input");
     if (result.status === "needs_input") {
@@ -529,7 +589,9 @@ describe("runRouterLoop", () => {
     expect(progressLog[1]!.stateDescription).toContain("my-password-123");
 
     // The system prompt should include existing progress
-    const createCall = vi.mocked(client.messages.create).mock.calls[0]![0] as { system: string };
+    const createCall = vi.mocked(client.messages.create).mock.calls[0]![0] as {
+      system: string;
+    };
     expect(createCall.system).toContain("Click login");
     expect(createCall.system).toContain("my-password-123");
   });

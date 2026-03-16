@@ -76,6 +76,19 @@ async function collectRole(page: Page, role: AriaRole): Promise<A11yElement[]> {
       }
     }
 
+    // Detect sensitive fields (password inputs)
+    let sensitive = false;
+    if (role === "textbox" || role === "combobox") {
+      try {
+        const inputType = await el.getAttribute("type", { timeout: LOCATOR_TIMEOUT_MS });
+        if (inputType === "password") {
+          sensitive = true;
+        }
+      } catch {
+        // Fallback: not sensitive
+      }
+    }
+
     const locatorStr = buildLocator(role, name);
 
     results.push({
@@ -85,6 +98,7 @@ async function collectRole(page: Page, role: AriaRole): Promise<A11yElement[]> {
       locator: locatorStr,
       bounds: { x: box.x, y: box.y, width: box.width, height: box.height },
       ...(href ? { href } : {}),
+      ...(sensitive ? { sensitive: true } : {}),
     });
   }
 
@@ -232,6 +246,9 @@ export function formatA11yTree(elements: A11yElement[], structural?: StructuralE
     return elements
       .map((el) => {
         let line = `[${el.label}] ${el.role} "${el.name}"`;
+        if (el.sensitive) {
+          line += " [SENSITIVE]";
+        }
         if (el.bounds) {
           line += ` (${Math.round(el.bounds.x)},${Math.round(el.bounds.y)} ${Math.round(el.bounds.width)}x${Math.round(el.bounds.height)})`;
         }
@@ -262,6 +279,9 @@ export function formatA11yTree(elements: A11yElement[], structural?: StructuralE
       if (item.kind === "interactive") {
         const el = item.el;
         let line = `[${el.label}] ${el.role} "${el.name}"`;
+        if (el.sensitive) {
+          line += " [SENSITIVE]";
+        }
         if (el.bounds) {
           line += ` (${Math.round(el.bounds.x)},${Math.round(el.bounds.y)} ${Math.round(el.bounds.width)}x${Math.round(el.bounds.height)})`;
         }
@@ -275,4 +295,134 @@ export function formatA11yTree(elements: A11yElement[], structural?: StructuralE
       return `--- ${el.tag}${text} ---`;
     })
     .join("\n");
+}
+
+// --- Incremental A11y Snapshots ---
+
+export interface A11yDiff {
+  added: A11yElement[];
+  removed: A11yElement[];
+  changed: Array<{ current: A11yElement; prevName?: string }>;
+  unchangedElements: A11yElement[];
+  unchanged: number;
+  total: number;
+}
+
+function semanticKey(el: A11yElement): string {
+  return `${el.role}::${el.name}`;
+}
+
+function positionKey(el: A11yElement): string {
+  const b = el.bounds;
+  return b ? `${el.role}::${el.name}::${Math.round(b.x)},${Math.round(b.y)}` : semanticKey(el);
+}
+
+const BOUNDS_SHIFT_THRESHOLD = 50; // px — elements that moved significantly
+
+export function diffA11yElements(prev: A11yElement[], current: A11yElement[]): A11yDiff {
+  // Detect duplicate semantic keys — use position-aware keys for those
+  const prevSemanticCounts = new Map<string, number>();
+  for (const el of prev) {
+    const k = semanticKey(el);
+    prevSemanticCounts.set(k, (prevSemanticCounts.get(k) ?? 0) + 1);
+  }
+  const currSemanticCounts = new Map<string, number>();
+  for (const el of current) {
+    const k = semanticKey(el);
+    currSemanticCounts.set(k, (currSemanticCounts.get(k) ?? 0) + 1);
+  }
+
+  const hasDuplicates = (el: A11yElement): boolean => {
+    const k = semanticKey(el);
+    return (prevSemanticCounts.get(k) ?? 0) > 1 || (currSemanticCounts.get(k) ?? 0) > 1;
+  };
+
+  const keyFor = (el: A11yElement): string => hasDuplicates(el) ? positionKey(el) : semanticKey(el);
+
+  const prevMap = new Map<string, A11yElement>();
+  for (const el of prev) {
+    prevMap.set(keyFor(el), el);
+  }
+
+  const added: A11yElement[] = [];
+  const changed: Array<{ current: A11yElement; prevName?: string }> = [];
+  const unchangedElements: A11yElement[] = [];
+  const seen = new Set<string>();
+
+  for (const el of current) {
+    const key = keyFor(el);
+    seen.add(key);
+    const prevEl = prevMap.get(key);
+
+    if (!prevEl) {
+      added.push(el);
+    } else if (!hasDuplicates(el) && boundsShifted(prevEl.bounds, el.bounds)) {
+      changed.push({ current: el });
+    } else {
+      unchangedElements.push(el);
+    }
+  }
+
+  const removed: A11yElement[] = [];
+  for (const el of prev) {
+    if (!seen.has(keyFor(el))) {
+      removed.push(el);
+    }
+  }
+
+  return { added, removed, changed, unchangedElements, unchanged: unchangedElements.length, total: current.length };
+}
+
+function boundsShifted(
+  prev?: { x: number; y: number; width: number; height: number },
+  curr?: { x: number; y: number; width: number; height: number },
+): boolean {
+  if (!prev || !curr) {
+    return false;
+  }
+  const dx = Math.abs(prev.x - curr.x);
+  const dy = Math.abs(prev.y - curr.y);
+  return dx > BOUNDS_SHIFT_THRESHOLD || dy > BOUNDS_SHIFT_THRESHOLD;
+}
+
+export function formatA11yTreeDiff(diff: A11yDiff): string {
+  const lines: string[] = [];
+
+  if (diff.added.length > 0) {
+    for (const el of diff.added) {
+      let line = `+ [${el.label}] ${el.role} "${el.name}"`;
+      if (el.sensitive) {
+        line += " [SENSITIVE]";
+      }
+      if (el.bounds) {
+        line += ` (${Math.round(el.bounds.x)},${Math.round(el.bounds.y)} ${Math.round(el.bounds.width)}x${Math.round(el.bounds.height)})`;
+      }
+      if (el.href) {
+        line += ` → ${el.href}`;
+      }
+      lines.push(line);
+    }
+  }
+
+  if (diff.removed.length > 0) {
+    for (const el of diff.removed) {
+      lines.push(`- [${el.label}] ${el.role} "${el.name}"`);
+    }
+  }
+
+  if (diff.changed.length > 0) {
+    for (const { current: el } of diff.changed) {
+      let line = `~ [${el.label}] ${el.role} "${el.name}" moved`;
+      if (el.bounds) {
+        line += ` (${Math.round(el.bounds.x)},${Math.round(el.bounds.y)})`;
+      }
+      lines.push(line);
+    }
+  }
+
+  if (diff.unchangedElements.length > 0) {
+    lines.push(`= ${diff.unchangedElements.map((el) => `[${el.label}] ${el.role} "${el.name}"`).join(" | ")}`);
+  }
+
+  return lines.join("\n");
 }

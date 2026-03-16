@@ -3,6 +3,7 @@ export interface SubTask {
   instruction: string;
   successCriteria: string;
   maxAttempts?: number;
+  secrets?: Record<string, string>;
 }
 
 export type ActorResult =
@@ -49,6 +50,7 @@ export interface A11yElement {
   locator: string;
   bounds?: { x: number; y: number; width: number; height: number };
   href?: string;
+  sensitive?: boolean;
 }
 
 export interface StructuralElement {

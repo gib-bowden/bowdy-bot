@@ -3,6 +3,7 @@ import type { Browser, Page } from "playwright-core";
 import { logger } from "../../logger.js";
 import { config } from "../../config.js";
 import { loadCookies } from "./cookies.js";
+import { DialogManager } from "./dialog.js";
 
 let browser: Browser | null = null;
 let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
@@ -17,6 +18,7 @@ class PageManager {
   private primaryPage: Page | null = null;
   private popupPage: Page | null = null;
   private popupTimer: ReturnType<typeof setTimeout> | null = null;
+  private _dialogManager = new DialogManager();
 
   activePage(): Page {
     if (this.popupPage && !this.popupPage.isClosed()) {
@@ -31,6 +33,7 @@ class PageManager {
 
   setPrimaryPage(p: Page): void {
     this.primaryPage = p;
+    this._dialogManager.attach(p);
   }
 
   getPrimaryPage(): Page | null {
@@ -46,6 +49,7 @@ class PageManager {
     }
 
     this.popupPage = p;
+    this._dialogManager.attach(p);
     logger.info({ popupUrl: p.url() }, "Popup opened — switching active page");
 
     // Auto-detect popup close
@@ -82,6 +86,10 @@ class PageManager {
       clearTimeout(this.popupTimer);
       this.popupTimer = null;
     }
+  }
+
+  getDialogManager(): DialogManager {
+    return this._dialogManager;
   }
 
   isAlive(): boolean {

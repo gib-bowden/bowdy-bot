@@ -35,6 +35,12 @@ const ROUTER_TOOLS: Anthropic.Tool[] = [
           type: "string",
           description: "How to verify the sub-task succeeded",
         },
+        secrets: {
+          type: "object",
+          description:
+            "Key-value pairs of sensitive data (e.g. passwords) to pass securely. The Actor references these as SECRET:<key> instead of plaintext.",
+          additionalProperties: { type: "string" },
+        },
       },
       required: ["instruction", "success_criteria"],
     },
@@ -346,11 +352,13 @@ export async function runRouterLoop(
     if (toolName === "dispatch_subtask") {
       const instruction = String(toolInput["instruction"] || "");
       const successCriteria = String(toolInput["success_criteria"] || "");
+      const secrets = toolInput["secrets"] as Record<string, string> | undefined;
 
       const subTask: SubTask = {
         id: generateSubTaskId(),
         instruction,
         successCriteria,
+        ...(secrets && typeof secrets === "object" ? { secrets } : {}),
       };
 
       logger.info(

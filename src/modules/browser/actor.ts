@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Page } from "playwright-core";
 import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
-import { getPageSnapshot, getScrollPosition, formatScrollContext, formatA11yTree } from "./a11y.js";
+import { getPageSnapshot, getScrollPosition, formatScrollContext, formatA11yTree, diffA11yElements, formatA11yTreeDiff } from "./a11y.js";
 import { captureWithLabels } from "./set-of-mark.js";
 import {
   executeActionWithRetry,
@@ -231,6 +231,26 @@ export const ACTOR_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "browser_handle_dialog",
+    description:
+      "Accept or dismiss a browser dialog (alert, confirm, prompt). Use this when a dialog appears after an action.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        action: {
+          type: "string",
+          enum: ["accept", "dismiss"],
+          description: "Whether to accept or dismiss the dialog",
+        },
+        prompt_text: {
+          type: "string",
+          description: "Text to enter for prompt dialogs (only used with accept)",
+        },
+      },
+      required: ["action"],
+    },
+  },
+  {
     name: "browser_fill_form",
     description:
       "Fill multiple form fields at once with structured data. Automatically matches keys to form fields by name, label, placeholder, and type.",
@@ -249,7 +269,8 @@ export const ACTOR_TOOLS: Anthropic.Tool[] = [
   },
 ];
 
-export const ACTOR_SYSTEM_PROMPT = `You execute browser automation sub-tasks. You see a labeled screenshot and an accessibility tree listing interactive elements.`;
+export const ACTOR_SYSTEM_PROMPT = `You execute browser automation sub-tasks. You see a labeled screenshot and an accessibility tree listing interactive elements.
+For fields marked [SENSITIVE], type SECRET:<key> instead of the actual value. The real value is injected at execution time.`;
 
 const TOOL_TO_ACTION: Record<string, string> = {
   browser_click: "click",
@@ -516,6 +537,8 @@ export async function executeSubTask(
   });
 
   let currentElements = elements;
+  let prevElements: A11yElement[] = [];
+  let prevStructural: StructuralElement[] | undefined;
 
   while (actionsAttempted < maxAttempts) {
     logger.info(
@@ -709,6 +732,71 @@ export async function executeSubTask(
         break;
       }
 
+      // --- Handle dialog ---
+
+      if (toolName === "browser_handle_dialog") {
+        const dialogAction = String(toolInput["action"] || "accept");
+        const promptText = toolInput["prompt_text"] as string | undefined;
+        const pm = getPageManager();
+        const dm = pm.getDialogManager();
+        const pending = dm.pending();
+
+        if (!pending) {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            is_error: true,
+            content: [{ type: "text", text: "No pending dialog to handle." }],
+          });
+          toolResults.push(...stubResults(remaining));
+          actionsAttempted++;
+          break;
+        }
+
+        try {
+          if (dialogAction === "dismiss") {
+            await dm.dismiss();
+          } else {
+            await dm.accept(promptText);
+          }
+          consecutiveErrors = 0;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            is_error: true,
+            content: [{ type: "text", text: `Dialog handling failed: ${message}` }],
+          });
+          toolResults.push(...stubResults(remaining));
+          actionsAttempted++;
+          break;
+        }
+
+        actionsAttempted++;
+        // Take screenshot after dialog is handled
+        const screenshot = await takeScreenshot(page);
+        const metadata = await getPageMetadata(page);
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: toolUseBlock.id,
+          content: [
+            { type: "text", text: `Dialog ${dialogAction}ed.` },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/jpeg",
+                data: screenshot.toString("base64"),
+              },
+            },
+            { type: "text", text: `Page: ${metadata.url} — ${metadata.title}` },
+          ],
+        });
+        toolResults.push(...stubResults(remaining));
+        break;
+      }
+
       // --- Handle form fill ---
 
       if (toolName === "browser_fill_form") {
@@ -881,6 +969,20 @@ export async function executeSubTask(
         toolResults.push(...stubResults(remaining));
         actionsAttempted++;
         break;
+      }
+
+      // Secret injection — replace SECRET:<key> with real values
+      if (subTask.secrets && (action.action === "type" || action.action === "fill")) {
+        const text = (action as { text: string }).text;
+        if (text.startsWith("SECRET:")) {
+          const key = text.slice("SECRET:".length);
+          const secretValue = subTask.secrets[key];
+          if (secretValue) {
+            (action as { text: string }).text = secretValue;
+          } else {
+            logger.warn({ key }, "Secret key not found in subtask secrets");
+          }
+        }
       }
 
       // Resolve label references
@@ -1174,9 +1276,24 @@ export async function executeSubTask(
       } else {
         try {
           const snapshot = await getPageSnapshot(page);
+          prevElements = currentElements;
+          prevStructural = newStructural;
           currentElements = snapshot.interactive;
           newStructural = snapshot.structural;
           newLabeledScreenshot = await captureWithLabels(page, currentElements);
+
+          // Incremental snapshot: use diff format if less than 50% of elements changed
+          if (prevElements.length > 0) {
+            const diff = diffA11yElements(prevElements, currentElements);
+            const changedCount = diff.added.length + diff.removed.length + diff.changed.length;
+            if (changedCount < diff.total * 0.5) {
+              newA11yTree = formatA11yTreeDiff(diff);
+            } else {
+              newA11yTree = formatA11yTree(currentElements, newStructural);
+            }
+          } else {
+            newA11yTree = formatA11yTree(currentElements, newStructural);
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           logger.warn(
@@ -1184,8 +1301,8 @@ export async function executeSubTask(
             "Failed to refresh a11y tree, falling back to previous elements",
           );
           newLabeledScreenshot = await takeScreenshot(page);
+          newA11yTree = formatA11yTree(currentElements, newStructural);
         }
-        newA11yTree = formatA11yTree(currentElements, newStructural);
       }
       const metadata = await getPageMetadata(page);
       const newScrollInfo = await getScrollPosition(page);
@@ -1196,10 +1313,25 @@ export async function executeSubTask(
         | Anthropic.ImageBlockParam
       )[] = [];
 
-      if (result.error) {
+      // Dialog notification
+      if (result.dialogInfo) {
         toolResultContent.push({
           type: "text",
-          text: `Action error: ${result.error}`,
+          text: `A ${result.dialogInfo.type} dialog appeared: "${result.dialogInfo.message}". Use browser_handle_dialog to accept or dismiss it.`,
+        });
+      }
+
+      if (result.error) {
+        // Scrub secret values from error text
+        let errorText = result.error;
+        if (subTask.secrets) {
+          for (const value of Object.values(subTask.secrets)) {
+            errorText = errorText.replaceAll(value, "***");
+          }
+        }
+        toolResultContent.push({
+          type: "text",
+          text: `Action error: ${errorText}`,
         });
       }
 

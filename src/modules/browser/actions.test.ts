@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { validateUrl, isTransientError, executeActionWithRetry } from "./actions.js";
+import { validateUrl, isTransientError, executeActionWithRetry, resolveLocator } from "./actions.js";
 import type { BrowserAction } from "./actions.js";
 
 describe("validateUrl", () => {
@@ -92,6 +92,9 @@ describe("executeActionWithRetry", () => {
       screenshot: screenshotFn,
       mouse: { click: vi.fn().mockRejectedValue(new Error("Element not found")) },
       context: vi.fn().mockReturnValue(popupHandler),
+      on: vi.fn(),
+      off: vi.fn(),
+      evaluate: vi.fn().mockResolvedValue(undefined),
     } as never;
 
     const action: BrowserAction = { action: "click", x: 100, y: 200 };
@@ -100,5 +103,50 @@ describe("executeActionWithRetry", () => {
     if (result.kind === "result") {
       expect(result.error).toBe("Element not found");
     }
+  });
+});
+
+describe("resolveLocator", () => {
+  it("parses getByRole with name", () => {
+    const mockFirst = vi.fn().mockReturnValue("locator");
+    const mockGetByRole = vi.fn().mockReturnValue({ first: mockFirst });
+    const mockPage = { getByRole: mockGetByRole } as never;
+
+    const result = resolveLocator(mockPage, "getByRole('button', { name: 'Submit' })");
+    expect(result).toBe("locator");
+    expect(mockGetByRole).toHaveBeenCalledWith("button", { name: "Submit" });
+  });
+
+  it("parses getByRole without name", () => {
+    const mockFirst = vi.fn().mockReturnValue("locator");
+    const mockGetByRole = vi.fn().mockReturnValue({ first: mockFirst });
+    const mockPage = { getByRole: mockGetByRole } as never;
+
+    const result = resolveLocator(mockPage, "getByRole('checkbox')");
+    expect(result).toBe("locator");
+    expect(mockGetByRole).toHaveBeenCalledWith("checkbox");
+  });
+
+  it("handles escaped quotes in name", () => {
+    const mockFirst = vi.fn().mockReturnValue("locator");
+    const mockGetByRole = vi.fn().mockReturnValue({ first: mockFirst });
+    const mockPage = { getByRole: mockGetByRole } as never;
+
+    const result = resolveLocator(mockPage, "getByRole('button', { name: 'It\\'s here' })");
+    expect(result).toBe("locator");
+    expect(mockGetByRole).toHaveBeenCalledWith("button", { name: "It's here" });
+  });
+
+  it("returns null for CSS selectors", () => {
+    const mockPage = { getByRole: vi.fn() } as never;
+
+    expect(resolveLocator(mockPage, "#submit-btn")).toBeNull();
+    expect(resolveLocator(mockPage, ".login-form input")).toBeNull();
+    expect(resolveLocator(mockPage, "button[type=submit]")).toBeNull();
+  });
+
+  it("returns null for empty string", () => {
+    const mockPage = { getByRole: vi.fn() } as never;
+    expect(resolveLocator(mockPage, "")).toBeNull();
   });
 });
