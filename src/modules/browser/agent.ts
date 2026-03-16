@@ -1,8 +1,11 @@
 import { logger } from "../../logger.js";
+import { config } from "../../config.js";
 import { getPage } from "./session.js";
 import { validateUrl, takeScreenshot } from "./actions.js";
+import { saveCookies } from "./cookies.js";
 import { startSession, endSession } from "./eval/capture.js";
 import { runRouterLoop, ROUTER_MODEL } from "./router.js";
+import { generateSessionId, startMetricsSession, endMetricsSession } from "./metrics.js";
 import type { ProgressEntry, PageMetadata } from "./types.js";
 import { DEFAULT_BROWSER_MODEL } from "./types.js";
 import type { BrowserTaskResult } from "./types.js";
@@ -13,6 +16,7 @@ export { DEFAULT_BROWSER_MODEL, type BrowserTaskResult };
 let busy = false;
 let routerGoal = "";
 let routerProgressLog: ProgressEntry[] = [];
+let metricsSessionId: string | null = null;
 let sessionTimeout: ReturnType<typeof setTimeout> | null = null;
 const SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -36,9 +40,13 @@ function clearSessionTimeout(): void {
 }
 
 function resetSession(): void {
+  if (metricsSessionId) {
+    endMetricsSession("timeout");
+  }
   busy = false;
   routerGoal = "";
   routerProgressLog = [];
+  metricsSessionId = null;
   clearSessionTimeout();
 }
 
@@ -62,6 +70,8 @@ export async function startBrowserTask(url: string, goal: string): Promise<Brows
   busy = true;
   routerGoal = goal;
   routerProgressLog = [];
+  metricsSessionId = generateSessionId();
+  startMetricsSession(metricsSessionId, goal, url);
   resetSessionTimeout();
 
   const page = await getPage();
@@ -83,16 +93,21 @@ export async function startBrowserTask(url: string, goal: string): Promise<Brows
     });
 
     const pageMetadata: PageMetadata = { url, title: pageTitle };
-    const { result, progressLog } = await runRouterLoop(page, goal, screenshot, pageMetadata);
+    const { result, progressLog, routerIterations } = await runRouterLoop(page, goal, screenshot, pageMetadata);
 
     routerProgressLog = progressLog;
 
     if (result.status !== "needs_input") {
+      if (config.tokenEncryptionKey) {
+        await saveCookies(page).catch(() => {});
+      }
+      endMetricsSession(result.status, routerIterations);
       endSession(result);
       resetSession();
     }
     return result;
   } catch (err) {
+    endMetricsSession("error");
     resetSession();
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err: message }, "Browser task failed");
@@ -119,7 +134,7 @@ export async function continueBrowserTask(userResponse: string): Promise<Browser
       title: await page.title(),
     };
 
-    const { result, progressLog } = await runRouterLoop(
+    const { result, progressLog, routerIterations } = await runRouterLoop(
       page,
       routerGoal,
       screenshot,
@@ -130,11 +145,16 @@ export async function continueBrowserTask(userResponse: string): Promise<Browser
     routerProgressLog = progressLog;
 
     if (result.status !== "needs_input") {
+      if (config.tokenEncryptionKey) {
+        await saveCookies(page).catch(() => {});
+      }
+      endMetricsSession(result.status, routerIterations);
       endSession(result);
       resetSession();
     }
     return result;
   } catch (err) {
+    endMetricsSession("error");
     resetSession();
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err: message }, "Browser task continue failed");

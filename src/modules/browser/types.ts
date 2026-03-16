@@ -3,6 +3,7 @@ export interface SubTask {
   instruction: string;
   successCriteria: string;
   maxAttempts?: number;
+  secrets?: Record<string, string>;
 }
 
 export type ActorResult =
@@ -20,6 +21,7 @@ export type ActorResult =
       metadata: PageMetadata;
       blockedUrl?: string;
       failedDomains?: string[];
+      lastActions?: Array<{ action: string; error: string }>;
     };
 
 export interface VerifierResult {
@@ -48,6 +50,13 @@ export interface A11yElement {
   locator: string;
   bounds?: { x: number; y: number; width: number; height: number };
   href?: string;
+  sensitive?: boolean;
+}
+
+export interface StructuralElement {
+  tag: string;         // "h1", "h2", "nav", "main", etc.
+  text: string;
+  bounds?: { x: number; y: number; width: number; height: number };
 }
 
 export const DEFAULT_BROWSER_MODEL = "claude-sonnet-4-6";

@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { validateUrl } from "./actions.js";
+import { describe, it, expect, vi } from "vitest";
+import { validateUrl, isTransientError, executeActionWithRetry, resolveLocator } from "./actions.js";
+import type { BrowserAction } from "./actions.js";
 
 describe("validateUrl", () => {
   it("allows normal http/https URLs", () => {
@@ -45,5 +46,107 @@ describe("validateUrl", () => {
   it("rejects invalid URLs", () => {
     expect(validateUrl("not a url")).toMatch(/Invalid/);
     expect(validateUrl("")).toMatch(/Invalid/);
+  });
+});
+
+describe("isTransientError", () => {
+  it("matches transient error patterns", () => {
+    expect(isTransientError("Timeout 30000ms exceeded")).toBe(true);
+    expect(isTransientError("net::ERR_CONNECTION_RESET")).toBe(true);
+    expect(isTransientError("net::ERR_CONNECTION_TIMED_OUT")).toBe(true);
+    expect(isTransientError("execution context was destroyed")).toBe(true);
+    expect(isTransientError("frame was detached")).toBe(true);
+    expect(isTransientError("Target closed")).toBe(true);
+    expect(isTransientError("Element is not stable")).toBe(true);
+    expect(isTransientError("Click was intercepted by another element")).toBe(true);
+  });
+
+  it("does not match permanent errors", () => {
+    expect(isTransientError("Element not found")).toBe(false);
+    expect(isTransientError("click requires selector or x/y coordinates")).toBe(false);
+    expect(isTransientError("Unknown action: dance")).toBe(false);
+    expect(isTransientError("Blocked scheme: ftp:")).toBe(false);
+  });
+});
+
+describe("executeActionWithRetry", () => {
+  it("returns immediately on success", async () => {
+    const mockPage = {
+      mouse: { click: vi.fn() },
+      url: vi.fn().mockReturnValue("https://example.com"),
+      title: vi.fn().mockResolvedValue("Example"),
+      screenshot: vi.fn().mockResolvedValue(Buffer.from("screenshot")),
+    } as never;
+
+    const action: BrowserAction = { action: "screenshot" };
+    const result = await executeActionWithRetry(mockPage, action);
+    expect(result.kind).toBe("result");
+  });
+
+  it("does not retry permanent errors", async () => {
+    const screenshotFn = vi.fn().mockResolvedValue(Buffer.from("screenshot"));
+    const popupHandler = { on: vi.fn(), off: vi.fn() };
+    const mockPage = {
+      url: vi.fn().mockReturnValue("https://example.com"),
+      title: vi.fn().mockResolvedValue("Example"),
+      screenshot: screenshotFn,
+      mouse: { click: vi.fn().mockRejectedValue(new Error("Element not found")) },
+      context: vi.fn().mockReturnValue(popupHandler),
+      on: vi.fn(),
+      off: vi.fn(),
+      evaluate: vi.fn().mockResolvedValue(undefined),
+    } as never;
+
+    const action: BrowserAction = { action: "click", x: 100, y: 200 };
+    const result = await executeActionWithRetry(mockPage, action);
+    expect(result.kind).toBe("result");
+    if (result.kind === "result") {
+      expect(result.error).toBe("Element not found");
+    }
+  });
+});
+
+describe("resolveLocator", () => {
+  it("parses getByRole with name", () => {
+    const mockFirst = vi.fn().mockReturnValue("locator");
+    const mockGetByRole = vi.fn().mockReturnValue({ first: mockFirst });
+    const mockPage = { getByRole: mockGetByRole } as never;
+
+    const result = resolveLocator(mockPage, "getByRole('button', { name: 'Submit' })");
+    expect(result).toBe("locator");
+    expect(mockGetByRole).toHaveBeenCalledWith("button", { name: "Submit" });
+  });
+
+  it("parses getByRole without name", () => {
+    const mockFirst = vi.fn().mockReturnValue("locator");
+    const mockGetByRole = vi.fn().mockReturnValue({ first: mockFirst });
+    const mockPage = { getByRole: mockGetByRole } as never;
+
+    const result = resolveLocator(mockPage, "getByRole('checkbox')");
+    expect(result).toBe("locator");
+    expect(mockGetByRole).toHaveBeenCalledWith("checkbox");
+  });
+
+  it("handles escaped quotes in name", () => {
+    const mockFirst = vi.fn().mockReturnValue("locator");
+    const mockGetByRole = vi.fn().mockReturnValue({ first: mockFirst });
+    const mockPage = { getByRole: mockGetByRole } as never;
+
+    const result = resolveLocator(mockPage, "getByRole('button', { name: 'It\\'s here' })");
+    expect(result).toBe("locator");
+    expect(mockGetByRole).toHaveBeenCalledWith("button", { name: "It's here" });
+  });
+
+  it("returns null for CSS selectors", () => {
+    const mockPage = { getByRole: vi.fn() } as never;
+
+    expect(resolveLocator(mockPage, "#submit-btn")).toBeNull();
+    expect(resolveLocator(mockPage, ".login-form input")).toBeNull();
+    expect(resolveLocator(mockPage, "button[type=submit]")).toBeNull();
+  });
+
+  it("returns null for empty string", () => {
+    const mockPage = { getByRole: vi.fn() } as never;
+    expect(resolveLocator(mockPage, "")).toBeNull();
   });
 });

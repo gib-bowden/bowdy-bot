@@ -2,19 +2,22 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Page } from "playwright-core";
 import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
-import { getInteractiveElements, formatA11yTree } from "./a11y.js";
+import { getPageSnapshot, getScrollPosition, formatScrollContext, formatA11yTree, diffA11yElements, formatA11yTreeDiff } from "./a11y.js";
 import { captureWithLabels } from "./set-of-mark.js";
 import {
-  executeAction,
+  executeActionWithRetry,
   isActionResult,
   takeScreenshot,
   type BrowserAction,
 } from "./actions.js";
+import { getPageManager } from "./session.js";
+import { fillForm } from "./form-fill.js";
 import type {
   SubTask,
   ActorResult,
   PageMetadata,
   A11yElement,
+  StructuralElement,
 } from "./types.js";
 import { recordSessionTurn } from "./eval/capture.js";
 
@@ -113,7 +116,7 @@ export const ACTOR_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "browser_scroll",
-    description: "Scroll the page or a specific container.",
+    description: "Scroll the page or a specific container. Current scroll position is reported in each observation.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -194,7 +197,8 @@ export const ACTOR_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "need_input",
-    description: "Signal that user input is needed to continue.",
+    description:
+      "Ask the user for information the sub-task requires that wasn't included in the instruction (e.g. credentials, personal info, preferences). This is the only way to get information from the user — you cannot ask them through the page.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -218,9 +222,55 @@ export const ACTOR_TOOLS: Anthropic.Tool[] = [
       required: ["reason"],
     },
   },
+  {
+    name: "browser_close_popup",
+    description: "Close the current popup/tab and return to the main page.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
+    name: "browser_handle_dialog",
+    description:
+      "Accept or dismiss a browser dialog (alert, confirm, prompt). Use this when a dialog appears after an action.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        action: {
+          type: "string",
+          enum: ["accept", "dismiss"],
+          description: "Whether to accept or dismiss the dialog",
+        },
+        prompt_text: {
+          type: "string",
+          description: "Text to enter for prompt dialogs (only used with accept)",
+        },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "browser_fill_form",
+    description:
+      "Fill multiple form fields at once with structured data. Automatically matches keys to form fields by name, label, placeholder, and type.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        fields: {
+          type: "object",
+          description:
+            'Key-value pairs to fill. Keys are field names (e.g. "first_name", "email"). Values are the text to fill.',
+          additionalProperties: { type: "string" },
+        },
+      },
+      required: ["fields"],
+    },
+  },
 ];
 
-export const ACTOR_SYSTEM_PROMPT = `You execute browser automation sub-tasks. You see a labeled screenshot and an accessibility tree listing interactive elements.`;
+export const ACTOR_SYSTEM_PROMPT = `You execute browser automation sub-tasks. You see a labeled screenshot and an accessibility tree listing interactive elements.
+For fields marked [SENSITIVE], type SECRET:<key> instead of the actual value. The real value is injected at execution time.`;
 
 const TOOL_TO_ACTION: Record<string, string> = {
   browser_click: "click",
@@ -268,10 +318,11 @@ export function toolToBrowserAction(
   return { action, ...cleaned } as BrowserAction;
 }
 
-export function resolveLabel(
+export async function resolveLabel(
   action: BrowserAction,
   elements: A11yElement[],
-): BrowserAction | { error: string } {
+  page?: Page,
+): Promise<BrowserAction | { error: string }> {
   if (
     action.action === "click" &&
     "label" in action &&
@@ -283,11 +334,14 @@ export function resolveLabel(
         error: `Label [${action.label}] not found in accessibility tree`,
       };
     }
-    if (el.bounds) {
+
+    // Try fresh coordinate lookup when page is available
+    const bounds = await freshBounds(el, page);
+    if (bounds) {
       return {
         action: "click",
-        x: el.bounds.x + el.bounds.width / 2,
-        y: el.bounds.y + el.bounds.height / 2,
+        x: bounds.x + bounds.width / 2,
+        y: bounds.y + bounds.height / 2,
       };
     }
     return { action: "click", selector: el.locator };
@@ -300,17 +354,47 @@ export function resolveLabel(
         error: `Label [${action.label}] not found in accessibility tree`,
       };
     }
-    if (el.bounds) {
+
+    const bounds = await freshBounds(el, page);
+    if (bounds) {
       return {
         action: "hover",
-        x: el.bounds.x + el.bounds.width / 2,
-        y: el.bounds.y + el.bounds.height / 2,
+        x: bounds.x + bounds.width / 2,
+        y: bounds.y + bounds.height / 2,
       };
     }
     return { action: "hover", selector: el.locator };
   }
 
   return action;
+}
+
+/** Get fresh bounding box for an element, falling back to cached bounds. */
+async function freshBounds(
+  el: A11yElement,
+  page?: Page,
+): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  if (page && el.bounds) {
+    try {
+      const role = el.role as Parameters<Page["getByRole"]>[0];
+      const box = await page.getByRole(role, { name: el.name }).first().boundingBox({ timeout: 500 });
+      if (box && box.width > 0 && box.height > 0) {
+        // Warn if fresh coords differ significantly from cached (possible wrong element)
+        const dx = Math.abs(box.x + box.width / 2 - (el.bounds.x + el.bounds.width / 2));
+        const dy = Math.abs(box.y + box.height / 2 - (el.bounds.y + el.bounds.height / 2));
+        if (dx > 200 || dy > 200) {
+          logger.warn(
+            { role, name: el.name, cached: el.bounds, fresh: box },
+            "Fresh bounds differ significantly from cached — possible wrong element match",
+          );
+        }
+        return box;
+      }
+    } catch {
+      // Fall back to cached
+    }
+  }
+  return el.bounds ?? null;
 }
 
 function trimScreenshotHistory(messages: Anthropic.MessageParam[]): void {
@@ -401,18 +485,22 @@ export async function executeSubTask(
   blockedDomains?: Set<string>,
 ): Promise<ActorResult> {
   const client = getClient();
-  const maxAttempts = subTask.maxAttempts || 8;
+  const maxAttempts = subTask.maxAttempts || 12;
   const messages: Anthropic.MessageParam[] = [];
   let consecutiveErrors = 0;
   let actionsAttempted = 0;
   let textOnlyResponses = 0;
   const failedDomains = new Set<string>(blockedDomains);
+  const recentActions: Array<{ action: string; error: string }> = [];
 
   // Build initial user message with screenshot + a11y tree
   let elements: A11yElement[];
   let labeledScreenshot: Buffer;
+  let structural;
   try {
-    elements = await getInteractiveElements(page);
+    const snapshot = await getPageSnapshot(page);
+    elements = snapshot.interactive;
+    structural = snapshot.structural;
     labeledScreenshot = await captureWithLabels(page, elements);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -426,7 +514,9 @@ export async function executeSubTask(
       metadata,
     };
   }
-  const a11yTree = formatA11yTree(elements);
+  const scrollInfo = await getScrollPosition(page);
+  const scrollLine = formatScrollContext(scrollInfo);
+  const a11yTree = formatA11yTree(elements, structural);
 
   messages.push({
     role: "user",
@@ -441,12 +531,14 @@ export async function executeSubTask(
       },
       {
         type: "text",
-        text: `Page: ${initialMetadata.url} — ${initialMetadata.title}\n\nAccessibility tree:\n${a11yTree}\n\nSub-task: ${subTask.instruction}`,
+        text: `Page: ${initialMetadata.url} — ${initialMetadata.title}\n${scrollLine}\n\nAccessibility tree:\n${a11yTree}\n\nSub-task: ${subTask.instruction}`,
       },
     ],
   });
 
   let currentElements = elements;
+  let prevElements: A11yElement[] = [];
+  let prevStructural: StructuralElement[] | undefined;
 
   while (actionsAttempted < maxAttempts) {
     logger.info(
@@ -466,6 +558,7 @@ export async function executeSubTask(
       system: ACTOR_SYSTEM_PROMPT,
       messages,
       tools: ACTOR_TOOLS,
+      // "auto" (not "any") — allows text-only reasoning; textOnlyResponses counter handles stalls
       tool_choice: { type: "auto" },
     });
 
@@ -639,6 +732,229 @@ export async function executeSubTask(
         break;
       }
 
+      // --- Handle dialog ---
+
+      if (toolName === "browser_handle_dialog") {
+        const dialogAction = String(toolInput["action"] || "accept");
+        const promptText = toolInput["prompt_text"] as string | undefined;
+        const pm = getPageManager();
+        const dm = pm.getDialogManager();
+        const pending = dm.pending();
+
+        if (!pending) {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            is_error: true,
+            content: [{ type: "text", text: "No pending dialog to handle." }],
+          });
+          toolResults.push(...stubResults(remaining));
+          actionsAttempted++;
+          break;
+        }
+
+        try {
+          if (dialogAction === "dismiss") {
+            await dm.dismiss();
+          } else {
+            await dm.accept(promptText);
+          }
+          consecutiveErrors = 0;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            is_error: true,
+            content: [{ type: "text", text: `Dialog handling failed: ${message}` }],
+          });
+          toolResults.push(...stubResults(remaining));
+          actionsAttempted++;
+          break;
+        }
+
+        actionsAttempted++;
+        // Take screenshot after dialog is handled
+        const screenshot = await takeScreenshot(page);
+        const metadata = await getPageMetadata(page);
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: toolUseBlock.id,
+          content: [
+            { type: "text", text: `Dialog ${dialogAction}ed.` },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/jpeg",
+                data: screenshot.toString("base64"),
+              },
+            },
+            { type: "text", text: `Page: ${metadata.url} — ${metadata.title}` },
+          ],
+        });
+        toolResults.push(...stubResults(remaining));
+        break;
+      }
+
+      // --- Handle form fill ---
+
+      if (toolName === "browser_fill_form") {
+        const fields = toolInput["fields"] as Record<string, string> | undefined;
+        if (!fields || typeof fields !== "object") {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            is_error: true,
+            content: [{ type: "text", text: "browser_fill_form requires a 'fields' object" }],
+          });
+          toolResults.push(...stubResults(remaining));
+          actionsAttempted++;
+          break;
+        }
+
+        actionsAttempted++;
+        const result = await fillForm(page, fields);
+        if (result.filled.length > 0) {
+          consecutiveErrors = 0;
+        }
+
+        let summary = "";
+        if (result.filled.length > 0) {
+          summary += `Filled ${result.filled.length} field(s): ${result.filled.map((f) => `${f.key} → "${f.field}"`).join(", ")}`;
+        }
+        if (result.unmatched.length > 0) {
+          summary += `\nCould not match: ${result.unmatched.join(", ")}. Use browser_fill or browser_type to fill these individually.`;
+        }
+        if (result.filled.length === 0) {
+          summary = `No fields could be matched. Available keys: ${result.unmatched.join(", ")}. Use browser_fill or browser_type instead.`;
+        }
+
+        // Take screenshot after filling
+        try {
+          const snapshot = await getPageSnapshot(page);
+          currentElements = snapshot.interactive;
+          const newStructural = snapshot.structural;
+          const newLabeledScreenshot = await captureWithLabels(page, currentElements);
+          const metadata = await getPageMetadata(page);
+          const newScrollInfo = await getScrollPosition(page);
+          const newScrollLine = formatScrollContext(newScrollInfo);
+          const newA11yTree = formatA11yTree(currentElements, newStructural);
+
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            content: [
+              { type: "text", text: summary },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: newLabeledScreenshot.toString("base64"),
+                },
+              },
+              {
+                type: "text",
+                text: `Page: ${metadata.url} — ${metadata.title}\n${newScrollLine}\n\nAccessibility tree:\n${newA11yTree}\n\nSub-task: ${subTask.instruction}`,
+              },
+            ],
+          });
+        } catch {
+          const screenshot = await takeScreenshot(page);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            content: [
+              { type: "text", text: summary },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: screenshot.toString("base64"),
+                },
+              },
+            ],
+          });
+        }
+
+        toolResults.push(...stubResults(remaining));
+        break;
+      }
+
+      // --- Handle popup close ---
+
+      if (toolName === "browser_close_popup") {
+        const pm = getPageManager();
+        if (!pm.hasPopup()) {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            content: [{ type: "text", text: "No popup is currently open." }],
+          });
+          toolResults.push(...stubResults(remaining));
+          actionsAttempted++;
+          break;
+        }
+
+        const primaryPage = await pm.closePopup();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // Take screenshot of primary page and refresh a11y tree
+        try {
+          const snapshot = await getPageSnapshot(primaryPage);
+          currentElements = snapshot.interactive;
+          const newStructural = snapshot.structural;
+          const newLabeledScreenshot = await captureWithLabels(primaryPage, currentElements);
+          const metadata = await getPageMetadata(primaryPage);
+          const newScrollInfo = await getScrollPosition(primaryPage);
+          const newScrollLine = formatScrollContext(newScrollInfo);
+          const newA11yTree = formatA11yTree(currentElements, newStructural);
+
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: newLabeledScreenshot.toString("base64"),
+                },
+              },
+              {
+                type: "text",
+                text: `Popup closed. Back on main page.\nPage: ${metadata.url} — ${metadata.title}\n${newScrollLine}\n\nAccessibility tree:\n${newA11yTree}\n\nSub-task: ${subTask.instruction}`,
+              },
+            ],
+          });
+        } catch {
+          const screenshot = await takeScreenshot(primaryPage);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseBlock.id,
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/jpeg",
+                  data: screenshot.toString("base64"),
+                },
+              },
+              { type: "text", text: "Popup closed. Back on main page." },
+            ],
+          });
+        }
+
+        toolResults.push(...stubResults(remaining));
+        actionsAttempted++;
+        consecutiveErrors = 0;
+        break;
+      }
+
       // --- Handle browser action tools ---
 
       const action = toolToBrowserAction(toolName, toolInput);
@@ -655,8 +971,22 @@ export async function executeSubTask(
         break;
       }
 
+      // Secret injection — replace SECRET:<key> with real values
+      if (subTask.secrets && (action.action === "type" || action.action === "fill")) {
+        const text = (action as { text: string }).text;
+        if (text.startsWith("SECRET:")) {
+          const key = text.slice("SECRET:".length);
+          const secretValue = subTask.secrets[key];
+          if (secretValue) {
+            (action as { text: string }).text = secretValue;
+          } else {
+            logger.warn({ key }, "Secret key not found in subtask secrets");
+          }
+        }
+      }
+
       // Resolve label references
-      const resolved = resolveLabel(action, currentElements);
+      const resolved = await resolveLabel(action, currentElements, page);
       if ("error" in resolved) {
         consecutiveErrors++;
         logger.warn(
@@ -676,6 +1006,11 @@ export async function executeSubTask(
           layer: "actor",
           subtask_id: subTask.id,
         });
+
+        recentActions.push({ action: action.action, error: resolved.error });
+        if (recentActions.length > 3) {
+          recentActions.shift();
+        }
 
         let errorText = `Action failed: ${resolved.error}. Try a different approach.`;
         if (consecutiveErrors >= 3) {
@@ -700,6 +1035,7 @@ export async function executeSubTask(
             ...(failedDomains.size > 0
               ? { failedDomains: [...failedDomains] }
               : {}),
+            lastActions: [...recentActions],
           };
         }
         actionsAttempted++;
@@ -734,10 +1070,14 @@ export async function executeSubTask(
         { actionsAttempted, action: resolved, batchIndex: i, batchSize: toolUseBlocks.length },
         "Actor executing action",
       );
-      const result = await executeAction(page, resolved);
+      const result = await executeActionWithRetry(page, resolved);
 
       if (!isActionResult(result)) {
         consecutiveErrors++;
+        recentActions.push({ action: resolved.action, error: result.error });
+        if (recentActions.length > 3) {
+          recentActions.shift();
+        }
 
         // Track failed domains for navigate actions
         if (resolved.action === "navigate" && resolved.url) {
@@ -811,6 +1151,7 @@ export async function executeSubTask(
             ...(failedDomains.size > 0
               ? { failedDomains: [...failedDomains] }
               : {}),
+            lastActions: [...recentActions],
           };
         }
         break;
@@ -839,6 +1180,10 @@ export async function executeSubTask(
       // Action succeeded (possibly with error)
       if (result.error) {
         consecutiveErrors++;
+        recentActions.push({ action: resolved.action, error: result.error });
+        if (recentActions.length > 3) {
+          recentActions.shift();
+        }
 
         // Track failed domains for navigate actions (screenshot was still captured)
         if (resolved.action === "navigate" && resolved.url) {
@@ -902,6 +1247,7 @@ export async function executeSubTask(
           ...(failedDomains.size > 0
             ? { failedDomains: [...failedDomains] }
             : {}),
+          lastActions: [...recentActions],
         };
         break;
       }
@@ -923,13 +1269,31 @@ export async function executeSubTask(
 
       let newLabeledScreenshot: Buffer;
       let newA11yTree: string;
+      let newStructural: StructuralElement[] | undefined;
       if (viewportOnly) {
         newLabeledScreenshot = await takeScreenshot(page);
         newA11yTree = formatA11yTree(currentElements);
       } else {
         try {
-          currentElements = await getInteractiveElements(page);
+          const snapshot = await getPageSnapshot(page);
+          prevElements = currentElements;
+          prevStructural = newStructural;
+          currentElements = snapshot.interactive;
+          newStructural = snapshot.structural;
           newLabeledScreenshot = await captureWithLabels(page, currentElements);
+
+          // Incremental snapshot: use diff format if less than 50% of elements changed
+          if (prevElements.length > 0) {
+            const diff = diffA11yElements(prevElements, currentElements);
+            const changedCount = diff.added.length + diff.removed.length + diff.changed.length;
+            if (changedCount < diff.total * 0.5) {
+              newA11yTree = formatA11yTreeDiff(diff);
+            } else {
+              newA11yTree = formatA11yTree(currentElements, newStructural);
+            }
+          } else {
+            newA11yTree = formatA11yTree(currentElements, newStructural);
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           logger.warn(
@@ -937,20 +1301,37 @@ export async function executeSubTask(
             "Failed to refresh a11y tree, falling back to previous elements",
           );
           newLabeledScreenshot = await takeScreenshot(page);
+          newA11yTree = formatA11yTree(currentElements, newStructural);
         }
-        newA11yTree = formatA11yTree(currentElements);
       }
       const metadata = await getPageMetadata(page);
+      const newScrollInfo = await getScrollPosition(page);
+      const newScrollLine = formatScrollContext(newScrollInfo);
 
       const toolResultContent: (
         | Anthropic.TextBlockParam
         | Anthropic.ImageBlockParam
       )[] = [];
 
-      if (result.error) {
+      // Dialog notification
+      if (result.dialogInfo) {
         toolResultContent.push({
           type: "text",
-          text: `Action error: ${result.error}`,
+          text: `A ${result.dialogInfo.type} dialog appeared: "${result.dialogInfo.message}". Use browser_handle_dialog to accept or dismiss it.`,
+        });
+      }
+
+      if (result.error) {
+        // Scrub secret values from error text
+        let errorText = result.error;
+        if (subTask.secrets) {
+          for (const value of Object.values(subTask.secrets)) {
+            errorText = errorText.replaceAll(value, "***");
+          }
+        }
+        toolResultContent.push({
+          type: "text",
+          text: `Action error: ${errorText}`,
         });
       }
 
@@ -979,7 +1360,7 @@ export async function executeSubTask(
         },
         {
           type: "text",
-          text: `Page: ${metadata.url} — ${metadata.title}\n\nAccessibility tree:\n${newA11yTree}\n\nSub-task: ${subTask.instruction}`,
+          text: `Page: ${metadata.url} — ${metadata.title}\n${newScrollLine}\n\nAccessibility tree:\n${newA11yTree}\n\nSub-task: ${subTask.instruction}`,
         },
       );
 
