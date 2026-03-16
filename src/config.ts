@@ -53,7 +53,7 @@ export const config = {
     "http://localhost:3001/kroger/callback",
   ),
   enableMorningBriefing: optional("ENABLE_MORNING_BRIEFING", "true") === "true",
-  morningBriefingHour: optional("MORNING_BRIEFING_HOUR", "8"),
+  morningBriefingHour: optional("MORNING_BRIEFING_HOUR", "7"),
   enableEmailTriage: optional("ENABLE_EMAIL_TRIAGE", "false") === "true",
   emailTriageAccounts: process.env["EMAIL_TRIAGE_ACCOUNTS"] ?? "",
   emailTriageFamilyAccount: process.env["EMAIL_TRIAGE_FAMILY_ACCOUNT"] ?? "",
