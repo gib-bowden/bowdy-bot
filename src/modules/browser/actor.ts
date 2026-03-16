@@ -2,7 +2,14 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Page } from "playwright-core";
 import { getClient } from "../../ai/client.js";
 import { logger } from "../../logger.js";
-import { getPageSnapshot, getScrollPosition, formatScrollContext, formatA11yTree, diffA11yElements, formatA11yTreeDiff } from "./a11y.js";
+import {
+  getPageSnapshot,
+  getScrollPosition,
+  formatScrollContext,
+  formatA11yTree,
+  diffA11yElements,
+  formatA11yTreeDiff,
+} from "./a11y.js";
 import { captureWithLabels } from "./set-of-mark.js";
 import {
   executeActionWithRetry,
@@ -116,7 +123,8 @@ export const ACTOR_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "browser_scroll",
-    description: "Scroll the page or a specific container. Current scroll position is reported in each observation.",
+    description:
+      "Scroll the page or a specific container. Current scroll position is reported in each observation.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -244,7 +252,8 @@ export const ACTOR_TOOLS: Anthropic.Tool[] = [
         },
         prompt_text: {
           type: "string",
-          description: "Text to enter for prompt dialogs (only used with accept)",
+          description:
+            "Text to enter for prompt dialogs (only used with accept)",
         },
       },
       required: ["action"],
@@ -377,11 +386,18 @@ async function freshBounds(
   if (page && el.bounds) {
     try {
       const role = el.role as Parameters<Page["getByRole"]>[0];
-      const box = await page.getByRole(role, { name: el.name }).first().boundingBox({ timeout: 500 });
+      const box = await page
+        .getByRole(role, { name: el.name })
+        .first()
+        .boundingBox({ timeout: 500 });
       if (box && box.width > 0 && box.height > 0) {
         // Warn if fresh coords differ significantly from cached (possible wrong element)
-        const dx = Math.abs(box.x + box.width / 2 - (el.bounds.x + el.bounds.width / 2));
-        const dy = Math.abs(box.y + box.height / 2 - (el.bounds.y + el.bounds.height / 2));
+        const dx = Math.abs(
+          box.x + box.width / 2 - (el.bounds.x + el.bounds.width / 2),
+        );
+        const dy = Math.abs(
+          box.y + box.height / 2 - (el.bounds.y + el.bounds.height / 2),
+        );
         if (dx > 200 || dy > 200) {
           logger.warn(
             { role, name: el.name, cached: el.bounds, fresh: box },
@@ -538,7 +554,6 @@ export async function executeSubTask(
 
   let currentElements = elements;
   let prevElements: A11yElement[] = [];
-  let prevStructural: StructuralElement[] | undefined;
 
   while (actionsAttempted < maxAttempts) {
     logger.info(
@@ -583,7 +598,10 @@ export async function executeSubTask(
     // With tool_choice: "auto", the model may return text-only — re-prompt
     if (toolUseBlocks.length === 0) {
       textOnlyResponses++;
-      logger.warn({ actionsAttempted, textOnlyResponses }, "Actor returned no tool_use blocks, re-prompting");
+      logger.warn(
+        { actionsAttempted, textOnlyResponses },
+        "Actor returned no tool_use blocks, re-prompting",
+      );
       if (textOnlyResponses >= 3) {
         const { screenshot, metadata } = await safeEscalationState(page);
         return {
@@ -596,14 +614,22 @@ export async function executeSubTask(
       messages.push({ role: "assistant", content: response.content });
       messages.push({
         role: "user",
-        content: [{ type: "text", text: "Please take an action using one of the available tools." }],
+        content: [
+          {
+            type: "text",
+            text: "Please take an action using one of the available tools.",
+          },
+        ],
       });
       continue;
     }
 
     if (toolUseBlocks.length > 1) {
       logger.info(
-        { count: toolUseBlocks.length, tools: toolUseBlocks.map((b) => b.name) },
+        {
+          count: toolUseBlocks.length,
+          tools: toolUseBlocks.map((b) => b.name),
+        },
         "Actor returned batched actions",
       );
     }
@@ -766,7 +792,9 @@ export async function executeSubTask(
             type: "tool_result",
             tool_use_id: toolUseBlock.id,
             is_error: true,
-            content: [{ type: "text", text: `Dialog handling failed: ${message}` }],
+            content: [
+              { type: "text", text: `Dialog handling failed: ${message}` },
+            ],
           });
           toolResults.push(...stubResults(remaining));
           actionsAttempted++;
@@ -800,13 +828,20 @@ export async function executeSubTask(
       // --- Handle form fill ---
 
       if (toolName === "browser_fill_form") {
-        const fields = toolInput["fields"] as Record<string, string> | undefined;
+        const fields = toolInput["fields"] as
+          | Record<string, string>
+          | undefined;
         if (!fields || typeof fields !== "object") {
           toolResults.push({
             type: "tool_result",
             tool_use_id: toolUseBlock.id,
             is_error: true,
-            content: [{ type: "text", text: "browser_fill_form requires a 'fields' object" }],
+            content: [
+              {
+                type: "text",
+                text: "browser_fill_form requires a 'fields' object",
+              },
+            ],
           });
           toolResults.push(...stubResults(remaining));
           actionsAttempted++;
@@ -835,7 +870,10 @@ export async function executeSubTask(
           const snapshot = await getPageSnapshot(page);
           currentElements = snapshot.interactive;
           const newStructural = snapshot.structural;
-          const newLabeledScreenshot = await captureWithLabels(page, currentElements);
+          const newLabeledScreenshot = await captureWithLabels(
+            page,
+            currentElements,
+          );
           const metadata = await getPageMetadata(page);
           const newScrollInfo = await getScrollPosition(page);
           const newScrollLine = formatScrollContext(newScrollInfo);
@@ -906,7 +944,10 @@ export async function executeSubTask(
           const snapshot = await getPageSnapshot(primaryPage);
           currentElements = snapshot.interactive;
           const newStructural = snapshot.structural;
-          const newLabeledScreenshot = await captureWithLabels(primaryPage, currentElements);
+          const newLabeledScreenshot = await captureWithLabels(
+            primaryPage,
+            currentElements,
+          );
           const metadata = await getPageMetadata(primaryPage);
           const newScrollInfo = await getScrollPosition(primaryPage);
           const newScrollLine = formatScrollContext(newScrollInfo);
@@ -972,7 +1013,10 @@ export async function executeSubTask(
       }
 
       // Secret injection — replace SECRET:<key> with real values
-      if (subTask.secrets && (action.action === "type" || action.action === "fill")) {
+      if (
+        subTask.secrets &&
+        (action.action === "type" || action.action === "fill")
+      ) {
         const text = (action as { text: string }).text;
         if (text.startsWith("SECRET:")) {
           const key = text.slice("SECRET:".length);
@@ -1067,7 +1111,12 @@ export async function executeSubTask(
       // Execute action
       actionsAttempted++;
       logger.info(
-        { actionsAttempted, action: resolved, batchIndex: i, batchSize: toolUseBlocks.length },
+        {
+          actionsAttempted,
+          action: resolved,
+          batchIndex: i,
+          batchSize: toolUseBlocks.length,
+        },
         "Actor executing action",
       );
       const result = await executeActionWithRetry(page, resolved);
@@ -1265,7 +1314,9 @@ export async function executeSubTask(
       }
 
       // Last action — full observation (screenshot + a11y tree)
-      const viewportOnly = ["wait", "hover", "screenshot"].includes(resolved.action);
+      const viewportOnly = ["wait", "hover", "screenshot"].includes(
+        resolved.action,
+      );
 
       let newLabeledScreenshot: Buffer;
       let newA11yTree: string;
@@ -1277,7 +1328,6 @@ export async function executeSubTask(
         try {
           const snapshot = await getPageSnapshot(page);
           prevElements = currentElements;
-          prevStructural = newStructural;
           currentElements = snapshot.interactive;
           newStructural = snapshot.structural;
           newLabeledScreenshot = await captureWithLabels(page, currentElements);
@@ -1285,7 +1335,8 @@ export async function executeSubTask(
           // Incremental snapshot: use diff format if less than 50% of elements changed
           if (prevElements.length > 0) {
             const diff = diffA11yElements(prevElements, currentElements);
-            const changedCount = diff.added.length + diff.removed.length + diff.changed.length;
+            const changedCount =
+              diff.added.length + diff.removed.length + diff.changed.length;
             if (changedCount < diff.total * 0.5) {
               newA11yTree = formatA11yTreeDiff(diff);
             } else {
@@ -1313,6 +1364,14 @@ export async function executeSubTask(
         | Anthropic.ImageBlockParam
       )[] = [];
 
+      // Popup notification
+      if (result.popupOpened) {
+        toolResultContent.push({
+          type: "text",
+          text: "Your click opened a new tab. You are now viewing the popup. Use browser_close_popup to return to the main page when done.",
+        });
+      }
+
       // Dialog notification
       if (result.dialogInfo) {
         toolResultContent.push({
@@ -1338,7 +1397,7 @@ export async function executeSubTask(
       if (result.unchanged) {
         toolResultContent.push({
           type: "text",
-          text: "The page didn't change after your click. If the link opens a new tab, try using browser_navigate with the link's href from the accessibility tree instead.",
+          text: "The page didn't change after your action. Try clicking the element directly by its label, using different coordinates, or trying a different approach.",
         });
       }
 
